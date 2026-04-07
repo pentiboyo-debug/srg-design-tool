@@ -15,7 +15,7 @@ st.markdown("""
     [data-testid="stSidebar"] .st-emotion-cache-1wivap2, [data-testid="stSidebar"] .st-emotion-cache-1ob1npu { gap: 0.4rem !important; }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p, [data-testid="stSidebar"] .stMarkdown p { font-size: 13px !important; margin-bottom: 0px !important; font-weight: 600 !important; }
     [data-testid="stSidebar"] .stNumberInput input { font-size: 13px !important; height: 28px !important; padding: 0px 5px !important; }
-    [data-testid="stSidebar"] .stSlider { margin-bottom: -18px !important; }
+    [data-testid="stSidebar"] .stSlider { margin-bottom: -15px !important; }
     [data-testid="stSidebar"] .stCheckbox p, [data-testid="stSidebar"] .stRadio p { font-size: 13px !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -40,12 +40,10 @@ def import_settings(json_data):
         st.session_state[key] = val
     st.rerun()
 
-# --- 3. 위젯 동기화 로직 (오류 수정됨) ---
+# --- 3. 위젯 동기화 로직 ---
 def update_sync(k, val):
     if st.session_state.get("single_layer_sync"):
         parts = k.split('_')
-        # [수정] 키의 첫 부분이 R, G, B 파장 구분자일 때만 주기(Pitch) 동기화 실행
-        # 이를 통해 'angle_epe' 같은 벡터 방향 설정값과의 간섭을 차단함
         if len(parts) == 2 and parts[0] in ['R', 'G', 'B'] and parts[1] in ['icg', 'epe', 'oc']:
             for color in ['R', 'G', 'B']:
                 st.session_state[f"{color}_{parts[1]}_slider"] = val
@@ -89,24 +87,38 @@ def get_refractive_index(lam, n_d, V_d):
 def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, a_icg, a_epe, a_oc):
     if not wl_dict["active"]: return None
     lam = wl_dict["lambda"]; n_lam = get_refractive_index(lam, n_d, V_d); k0 = 2 * math.pi / lam; k_wg_max = n_lam * k0
+    
     G_ICG_x, G_ICG_y = m_order * (2*math.pi/wl_dict["Lambda_ICG"]) * np.array([math.cos(math.radians(a_icg)), math.sin(math.radians(a_icg))])
     G_EPE_x, G_EPE_y = (0, 0)
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
     G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
+    
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 1, 1)), np.radians(np.arange(v_min, v_max + 1, 1)))
     kx_in, ky_in = k0 * np.sin(H_mesh), k0 * np.sin(V_mesh); kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
+    
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
     tir_mask_icg = ((kx_icg**2 + ky_icg**2) > k0**2) & ((kx_icg**2 + ky_icg**2) < k_wg_max**2)
+    
     kx_epe, ky_epe = kx_icg + G_EPE_x, ky_icg + G_EPE_y; kz_epe = np.sqrt(np.maximum(k_wg_max**2 - kx_epe**2 - ky_epe**2, 0))
     tir_mask_epe = ((kx_epe**2 + ky_epe**2) > k0**2) & ((kx_epe**2 + ky_epe**2) < k_wg_max**2) if "Path B" in path_type else np.ones_like(tir_mask_icg, dtype=bool)
+    
     kx_oc, ky_oc = kx_epe + G_OC_x, ky_epe + G_OC_y; kz_oc = np.sqrt(np.maximum(k0**2 - kx_oc**2 - ky_oc**2, 0))
     tir_mask_oc = ((kx_oc**2 + ky_oc**2) <= k0**2)
+    
     hop_dist = 2 * t_mm * (np.sqrt(kx_epe**2 + ky_epe**2) / np.maximum(kz_epe, 1e-10))
     mask_0, mask_1, mask_2, mask_3 = np.ones_like(kx_in, dtype=bool), tir_mask_icg, tir_mask_icg & tir_mask_epe, tir_mask_icg & tir_mask_epe & tir_mask_oc & (hop_dist <= epd_limit)
+    
+    # 중심광선 궤적 데이터를 위해 ky 성분까지 포함하도록 수정
     center_idx = (np.abs(H_mesh) < 1e-5) & (np.abs(V_mesh) < 1e-5); c_ray = None
     if np.any(center_idx):
-        c_ray = {"kx_in": kx_in[center_idx][0], "kz_in": kz_in[center_idx][0], "kx_icg": kx_icg[center_idx][0], "kz_icg": kz_icg[center_idx][0], "kx_epe": kx_epe[center_idx][0], "kz_epe": kz_epe[center_idx][0], "kx_oc": kx_oc[center_idx][0], "kz_oc": kz_oc[center_idx][0]}
+        c_ray = {
+            "kx_in": kx_in[center_idx][0], "ky_in": ky_in[center_idx][0], "kz_in": kz_in[center_idx][0],
+            "kx_icg": kx_icg[center_idx][0], "ky_icg": ky_icg[center_idx][0], "kz_icg": kz_icg[center_idx][0],
+            "kx_epe": kx_epe[center_idx][0], "ky_epe": ky_epe[center_idx][0], "kz_epe": kz_epe[center_idx][0],
+            "kx_oc": kx_oc[center_idx][0], "ky_oc": ky_oc[center_idx][0], "kz_oc": kz_oc[center_idx][0]
+        }
+        
     return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": np.degrees(H_mesh), "V_mesh": np.degrees(V_mesh), "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x}
 
 # --- 5. 사이드바 UI ---
@@ -159,6 +171,7 @@ wl_B = get_wl_inputs("B", 450, 300, n_d_in, abbe_v_in)
 # --- 6. 분석 로직 실행 ---
 results = {}
 for data in [wl_R, wl_G, wl_B]:
+    # TypeError 방지: h_fov와 v_fov 튜플을 개별 인자로 풀어서 전달
     res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc)
     if res: results[data["color"]] = res
 
@@ -173,27 +186,44 @@ else:
     tab_xy, tab_xz, tab_sweep = st.tabs(["K-Space (XY 평면)", "K-Space (XZ 단면)", "두께(t) 스윕 분석"])
     c_map = {"R": "red", "G": "green", "B": "blue"}
 
+    # --- XY 평면 탭 ---
     with tab_xy:
         target = st.selectbox("XY 시각화 대상", viz_options, index=len(viz_options)-1, key="xy_sel")
-        fig_xy = go.Figure(); max_k = 0
+        fig_xy = go.Figure(); max_k = 0; common_mask = None
         plots = list(results.values()) if target == "RGB 통합 뷰 (Overlap)" else [results[target]]
+        
         for r in plots:
             cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
             max_k = max(max_k, r["k_wg_max"]/sf)
             fig_xy.add_shape(type="circle", x0=-r["k0"]/sf, y0=-r["k0"]/sf, x1=r["k0"]/sf, y1=r["k0"]/sf, line_color=pc, line_dash="dash", opacity=0.4)
             fig_xy.add_shape(type="circle", x0=-r["k_wg_max"]/sf, y0=-r["k_wg_max"]/sf, x1=r["k_wg_max"]/sf, y1=r["k_wg_max"]/sf, line_color=pc, fillcolor=pc, opacity=0.03)
             m0, m1, m2, m3 = r["mask_0"], r["mask_1"], r["mask_2"], r["mask_3"]
+            
+            if common_mask is None: common_mask = m3.copy()
+            else: common_mask &= m3
+
             fig_xy.add_trace(go.Scatter(x=r["kx_in"][m0]/sf, y=r["ky_in"][m0]/sf, mode="markers", marker=dict(size=2, color=pc, symbol="circle-open", opacity=0.1), name=f"{cn} Input", hoverinfo="skip"))
             fig_xy.add_trace(go.Scatter(x=r["kx_icg"][m1]/sf, y=r["ky_icg"][m1]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="square", opacity=0.3), name=f"{cn} Coupled", hoverinfo="skip"))
             if "Path B" in path_choice:
                 fig_xy.add_trace(go.Scatter(x=r["kx_epe"][m2]/sf, y=r["ky_epe"][m2]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="diamond", opacity=0.5), name=f"{cn} EPE", hoverinfo="skip"))
             ht = [f"H:{h:.0f} V:{v:.0f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
             fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Output", text=ht, hoverinfo="text"))
+
+            # --- [추가] XY 평면 중심광선 이동 궤적 화살표 ---
+            if (target != "RGB 통합 뷰 (Overlap)") or (cn == "G"):
+                if r["c_ray"]:
+                    c = r["c_ray"]
+                    pts = [[c["kx_in"], c["ky_in"]], [c["kx_icg"], c["ky_icg"]]]
+                    if "Path B" in path_choice: pts.append([c["kx_epe"], c["ky_epe"]])
+                    pts.append([c["kx_oc"], c["ky_oc"]])
+                    for i in range(len(pts)-1):
+                        fig_xy.add_annotation(x=pts[i+1][0]/sf, y=pts[i+1][1]/sf, ax=pts[i][0]/sf, ay=pts[i][1]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, opacity=0.8)
         
         lim = max_k * 1.1
         fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
         st.plotly_chart(fig_xy, use_container_width=True)
         
+        # --- [추가/수정] 요약 테이블 (Common 행 추가) ---
         st.subheader("📊 유효 FOV 및 마진 요약")
         summary_table = {}
         for c, r in results.items():
@@ -204,8 +234,15 @@ else:
                 summary_table[c] = {"H-FOV": f"{np.min(vh):.0f}°~{np.max(vh):.0f}°", "V-FOV": f"{np.min(vv):.0f}°~{np.max(vv):.0f}°", "Max Hop": f"{max_h:.2f}mm", "Min Overlap": f"{(epd_val_in - max_h):.2f}mm", "Pass": f"{(np.sum(mask)/mask.size*100):.1f}%"}
             else:
                 summary_table[c] = {"H-FOV": "None", "V-FOV": "None", "Max Hop": "-", "Min Overlap": "-", "Pass": "0%"}
+        
+        if common_mask is not None and np.any(common_mask):
+            ref_r = results[list(results.keys())[0]] 
+            ch, cv = ref_r["H_mesh"][common_mask], ref_r["V_mesh"][common_mask]
+            summary_table["Common"] = {"H-FOV": f"{np.min(ch):.0f}°~{np.max(ch):.0f}°", "V-FOV": f"{np.min(cv):.0f}°~{np.max(cv):.0f}°", "Max Hop": "-", "Min Overlap": "-", "Pass": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%"}
+            
         st.table(pd.DataFrame(summary_table))
 
+    # --- XZ 단면 탭 ---
     with tab_xz:
         target_xz = st.selectbox("XZ 시각화 대상", viz_options, index=len(viz_options)-1, key="xz_sel")
         fig_xz = go.Figure(); max_kz = 0
@@ -231,6 +268,7 @@ else:
         fig_xz.update_layout(title=f"K-Space XZ - 중심 시야각(0°) 궤적 ({coord_sys})", xaxis=dict(range=[-max_kz*1.1, max_kz*1.1], scaleanchor="y"), yaxis=dict(range=[0, max_kz*1.1]), height=600, plot_bgcolor="white")
         st.plotly_chart(fig_xz, use_container_width=True)
 
+    # --- 스윕 분석 탭 ---
     with tab_sweep:
         st.markdown("#### 두께 스윕 분석 (EPD 기반 탈락량 확인)")
         c1, c2, c3 = st.columns(3); ts, te, tp = c1.number_input("시작", 0.1, 3.0, 0.2), c2.number_input("종료", 0.1, 3.0, 1.0), c3.number_input("스텝", 0.01, 1.0, 0.05)
@@ -240,15 +278,25 @@ else:
                 d = {"t": round(t,3)}; cm = None
                 for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
                     if wd["active"]:
+                        # TypeError 방지: h_fov와 v_fov 튜플을 개별 인자로 풀어서 전달
                         rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc); mt = rt["mask_3"]
-                        if cm is None: cm = mt
-                        else: cm = cm & mt
-                        vh = rt["H_mesh"][mt]; d[f"{k} H-Span"] = np.max(vh)-np.min(vh) if len(vh)>0 else 0
+                        if cm is None: cm = mt.copy()
+                        else: cm &= mt
+                        vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
+                        d[f"{k} H-Span"] = np.max(vh)-np.min(vh) if np.any(mt) else 0
+                        d[f"{k} V-Span"] = np.max(vv)-np.min(vv) if np.any(mt) else 0
+                
                 if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]):
-                    vch = results["G"]["H_mesh"][cm]; d["Common H-Span"] = np.max(vch)-np.min(vch) if len(vch)>0 else 0
+                    ref_r = results[list(results.keys())[0]]
+                    ch, cv = ref_r["H_mesh"][cm], ref_r["V_mesh"][cm]
+                    d["Common H-Span"] = np.max(ch)-np.min(ch) if np.any(cm) else 0
+                    d["Common V-Span"] = np.max(cv)-np.min(cv) if np.any(cm) else 0
                 res_l.append(d); pb.progress((i+1)/len(t_arr))
+            
             df = pd.DataFrame(res_l); fs = go.Figure()
             for col in df.columns[1:]:
                 lc = "black" if "Common" in col else ("red" if "R" in col else ("green" if "G" in col else "blue"))
-                fs.add_trace(go.Scatter(x=df["t"], y=df[col], mode="lines+markers", name=col, line=dict(color=lc, width=2 if "Common" in col else 1)))
+                ls = "solid" if "H-Span" in col else "dot"
+                fs.add_trace(go.Scatter(x=df["t"], y=df[col], mode="lines+markers", name=col, line=dict(color=lc, width=2, dash=ls)))
+            fs.update_layout(title="두께 변화에 따른 H/V FOV Span 추이", xaxis_title="Thickness (mm)", yaxis_title="Span (°)")
             st.plotly_chart(fs, use_container_width=True); st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
