@@ -91,7 +91,8 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     G_ICG_x, G_ICG_y = m_order * (2*math.pi/wl_dict["Lambda_ICG"]) * np.array([math.cos(math.radians(a_icg)), math.sin(math.radians(a_icg))])
     G_EPE_x, G_EPE_y = (0, 0)
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
-        G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
+        G_EPE_mag = 2 * math.pi / wl_dict["Lambda_EPE"]
+        G_EPE_x, G_EPE_y = G_EPE_mag * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
     G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
     
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 1, 1)), np.radians(np.arange(v_min, v_max + 1, 1)))
@@ -109,7 +110,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     hop_dist = 2 * t_mm * (np.sqrt(kx_epe**2 + ky_epe**2) / np.maximum(kz_epe, 1e-10))
     mask_0, mask_1, mask_2, mask_3 = np.ones_like(kx_in, dtype=bool), tir_mask_icg, tir_mask_icg & tir_mask_epe, tir_mask_icg & tir_mask_epe & tir_mask_oc & (hop_dist <= epd_limit)
     
-    # 중심광선 궤적 데이터를 위해 ky 성분까지 포함하도록 수정
     center_idx = (np.abs(H_mesh) < 1e-5) & (np.abs(V_mesh) < 1e-5); c_ray = None
     if np.any(center_idx):
         c_ray = {
@@ -135,6 +135,7 @@ single_layer_sync = st.sidebar.checkbox("Single Layer 모드 (RGB 동기화)", v
 coord_sys = st.sidebar.radio("K-Space 좌표계", ["절대 파수 (nm⁻¹)", "정규화 파수 (Direction Cosine)"], index=1, horizontal=True, key="coord_sys")
 
 st.sidebar.markdown("---")
+# [수정] 굴절률 입력부에 실수형 포맷 '%.2f' 명시적 적용
 n_d_in = dual_input("기본 굴절률 (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("아베수 (Abbe Vd)", 10.0, 100.0, 35.0, 1.0, "abbe_v", "%.1f")
 thickness_in = dual_input("현재 두께 t (mm)", 0.1, 3.0, 0.40, 0.01, "thickness", "%.2f") 
@@ -144,9 +145,10 @@ v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 1, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
 st.sidebar.markdown("---")
-angle_icg = dual_input("ICG 벡터 방향 (°)", 0, 360, 0, 1, "angle_icg")
-angle_epe = dual_input("EPE 벡터 방향 (°)", 0, 360, 240, 1, "angle_epe") if "Path B" in path_choice else 0
-angle_oc = dual_input("OC 벡터 방향 (°)", 0, 360, 120, 1, "angle_oc")
+# [수정] 각도 파라미터들의 스텝을 0.01로 세분화하고 소수점 2자리 포맷('%.2f') 지정
+angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
+angle_epe = dual_input("EPE 벡터 방향 (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f") if "Path B" in path_choice else 0.0
+angle_oc = dual_input("OC 벡터 방향 (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f")
 
 st.sidebar.markdown("---")
 def get_wl_inputs(name, def_l, def_p, n_d, V_d):
@@ -171,7 +173,6 @@ wl_B = get_wl_inputs("B", 450, 300, n_d_in, abbe_v_in)
 # --- 6. 분석 로직 실행 ---
 results = {}
 for data in [wl_R, wl_G, wl_B]:
-    # TypeError 방지: h_fov와 v_fov 튜플을 개별 인자로 풀어서 전달
     res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc)
     if res: results[data["color"]] = res
 
@@ -209,7 +210,6 @@ else:
             ht = [f"H:{h:.0f} V:{v:.0f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
             fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Output", text=ht, hoverinfo="text"))
 
-            # --- [추가] XY 평면 중심광선 이동 궤적 화살표 ---
             if (target != "RGB 통합 뷰 (Overlap)") or (cn == "G"):
                 if r["c_ray"]:
                     c = r["c_ray"]
@@ -223,7 +223,6 @@ else:
         fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
         st.plotly_chart(fig_xy, use_container_width=True)
         
-        # --- [추가/수정] 요약 테이블 (Common 행 추가) ---
         st.subheader("📊 유효 FOV 및 마진 요약")
         summary_table = {}
         for c, r in results.items():
@@ -278,7 +277,6 @@ else:
                 d = {"t": round(t,3)}; cm = None
                 for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
                     if wd["active"]:
-                        # TypeError 방지: h_fov와 v_fov 튜플을 개별 인자로 풀어서 전달
                         rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc); mt = rt["mask_3"]
                         if cm is None: cm = mt.copy()
                         else: cm &= mt
