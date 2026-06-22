@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import json
 
-# --- 1. 기본 설정 및 UI 압축 CSS --- Test
+# --- 1. 기본 설정 및 UI 압축 CSS ---
 st.set_page_config(page_title="SRG DOE Waveguide 설계툴", layout="wide")
 
 st.markdown("""
@@ -44,7 +44,8 @@ def import_settings(json_data):
 def update_sync(k, val):
     if st.session_state.get("single_layer_sync"):
         parts = k.split('_')
-        if len(parts) == 2 and parts[0] in ['R', 'G', 'B'] and parts[1] in ['icg', 'epe', 'oc']:
+        # 주기(icg, epe, oc)뿐만 아니라 효율(eff) 시리즈도 싱글레이어 모드 시 동기화 연동
+        if len(parts) == 2 and parts[0] in ['R', 'G', 'B'] and parts[1] in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
             for color in ['R', 'G', 'B']:
                 st.session_state[f"{color}_{parts[1]}_slider"] = float(val)
                 st.session_state[f"{color}_{parts[1]}_num"] = float(val)
@@ -94,7 +95,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
     G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
     
-    # [수정] 소수점 단위 시야각 메쉬 샘플링을 위해 간격을 1에서 0.5도로 고도화 (밀도 유지 및 유연성 확보)
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
     kx_in, ky_in = k0 * np.sin(H_mesh), k0 * np.sin(V_mesh); kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
@@ -122,7 +122,7 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
             "kx_oc": kx_oc[c_i], "ky_oc": ky_oc[c_i], "kz_oc": kz_oc[c_i]
         }
         
-    return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": np.degrees(H_mesh), "V_mesh": np.degrees(V_mesh), "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x}
+    return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": np.degrees(H_mesh), "V_mesh": np.degrees(V_mesh), "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x, "Lambda_ICG": wl_dict["Lambda_ICG"], "Lambda_EPE": wl_dict["Lambda_EPE"], "Lambda_OC": wl_dict["Lambda_OC"], "eff_icg": wl_dict["eff_icg"], "eff_epe": wl_dict["eff_epe"], "eff_oc": wl_dict["eff_oc"]}
 
 # --- 5. 사이드바 UI ---
 st.sidebar.markdown("### 💾 설정 관리")
@@ -142,10 +142,15 @@ n_d_in = dual_input("기본 굴절률 (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d"
 abbe_v_in = dual_input("아베수 (Abbe Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
 thickness_in = dual_input("현재 두께 t (mm)", 0.1, 3.0, 0.40, 0.01, "thickness", "%.2f") 
 epd_val_in = dual_input("라이트엔진 EPD (mm)", 1.0, 50.0, 3.5, 0.1, "epd_val", "%.1f") 
-# [수정] FOV 제어 위젯 스텝 단차를 0.01로 미세화
 h_fov = dual_range_input("H FOV 범위 (°)", -60, 60, (-30, 30), 0.01, "h_fov")
 v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
+
+# [기능 추가] 1번 기능: OC 기하학적 유효 면적 설정을 위한 입력창 스케일링
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📐 Out-Coupler 영역 크기 설정**")
+oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f")
+oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f")
 
 st.sidebar.markdown("---")
 angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
@@ -158,7 +163,6 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
     if act:
         with st.sidebar.container():
             st.markdown(f"**[{name}] 세부 설정**")
-            # [수정] 파장(wl) 및 각 격자 주기(pitch) 위젯 단차 step을 0.01로 개정 및 소수점 포맷 반영
             wl = dual_input("λ (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl", "%.2f")
             limit_p = wl / get_refractive_index(wl, n_d, V_d)
             icg_p = dual_input("Λ_ICG (nm)", 100.0, 1000.0, def_p, 0.01, f"{name}_icg", "%.2f")
@@ -166,7 +170,14 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             else: st.caption(f"물리적 한계 주기: {limit_p:.2f}nm")
             epe_p = dual_input("Λ_EPE (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_epe", "%.2f") if "Path B" in path_choice else None
             oc_p = dual_input("Λ_OC (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_oc", "%.2f")
-            return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "color": name}
+            
+            # [기능 추가] 요구사항 1: 그레이팅 UI 섹션 내부에 회절효율(Efficiency) 입력단 배치
+            st.markdown("*회절 효율 설정 (0.00 ~ 1.00)*")
+            eff_icg = dual_input("ICG 회절 효율", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f")
+            eff_epe = dual_input("EPE 회절 효율", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f") if "Path B" in path_choice else 1.00
+            eff_oc = dual_input("OC 회절 효율", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f")
+            
+            return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
 
 wl_R = get_wl_inputs("R", 638.0, 300.0, n_d_in, abbe_v_in)
@@ -228,20 +239,58 @@ else:
         
         st.subheader("📊 유효 FOV 및 마진 요약")
         summary_table = {}
+        
+        # 기하학적 면적 $A_{OC}$ 구하기 ($mm^2 \rightarrow m^2$ 환산)
+        area_m2 = (oc_width * 1e-3) * (oc_height * 1e-3)
+        
         for c, r in results.items():
             mask = r['mask_3']
             if np.any(mask):
                 vh, vv, vhop = r['H_mesh'][mask], r['V_mesh'][mask], r['hop_distance'][mask]
                 max_h = np.max(vhop)
-                # [수정] 테이블 뷰 가독성을 위해 출력을 소수점 2자리(%.2f)로 고도화 변경
-                summary_table[c] = {"H-FOV": f"{np.min(vh):.2f}°~{np.max(vh):.2f}°", "V-FOV": f"{np.min(vv):.2f}°~{np.max(vv):.2f}°", "Max Hop": f"{max_h:.2f}mm", "Min Overlap": f"{(epd_val_in - max_h):.2f}mm", "Pass": f"{(np.sum(mask)/mask.size*100):.1f}%"}
+                
+                # [수정] 휘도 연산 추가: 유효 FOV를 바탕으로 솔리드 입체각 앵글 계산
+                h_span_rad = np.radians(np.max(vh) - np.min(vh))
+                v_span_rad = np.radians(np.max(vv) - np.min(vv))
+                omega = 4.0 * math.asin(math.sin(h_span_rad / 2.0) * math.sin(v_span_rad / 2.0)) if (h_span_rad > 0 and v_span_rad > 0) else 1e-6
+                
+                # 내부 TIR 도파 효율 가설 손실율 반영 (0.4mm 두께 비례 바운스당 0.5% 손실 가정)
+                avg_hops = max_h / (2.0 * thickness_in)
+                tir_loss_factor = 0.995 ** max(1.0, avg_hops)
+                
+                # 아웃커플링 최종 루멘 연산 ($1\text{ lm}$ 기준)
+                lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
+                nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
+                
+                summary_table[c] = {
+                    "H-FOV": f"{np.min(vh):.2f}°~{np.max(vh):.2f}°", 
+                    "V-FOV": f"{np.min(vv):.2f}°~{np.max(vv):.2f}°", 
+                    "Max Hop": f"{max_h:.2f}mm", 
+                    "Min Overlap": f"{(epd_val_in - max_h):.2f}mm", 
+                    "Pass": f"{(np.sum(mask)/mask.size*100):.1f}%",
+                    "Efficiency (nits/lm)": f"{nits_per_lumen:,.0f}"
+                }
             else:
-                summary_table[c] = {"H-FOV": "None", "V-FOV": "None", "Max Hop": "-", "Min Overlap": "-", "Pass": "0%"}
+                summary_table[c] = {"H-FOV": "None", "V-FOV": "None", "Max Hop": "-", "Min Overlap": "-", "Pass": "0%", "Efficiency (nits/lm)": "0"}
         
         if common_mask is not None and np.any(common_mask):
             ref_r = results[list(results.keys())[0]] 
             ch, cv = ref_r["H_mesh"][common_mask], ref_r["V_mesh"][common_mask]
-            summary_table["Common"] = {"H-FOV": f"{np.min(ch):.2f}°~{np.max(ch):.2f}°", "V-FOV": f"{np.min(cv):.2f}°~{np.max(cv):.2f}°", "Max Hop": "-", "Min Overlap": "-", "Pass": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%"}
+            
+            c_h_rad = np.radians(np.max(ch) - np.min(ch))
+            c_v_rad = np.radians(np.max(cv) - np.min(cv))
+            c_omega = 4.0 * math.asin(math.sin(c_h_rad / 2.0) * math.sin(c_v_rad / 2.0)) if (c_h_rad > 0 and c_v_rad > 0) else 1e-6
+            
+            # 합산 화이트 밸런스 균일 효율 모델 가중치 산출
+            c_nits = sum([float(summary_table[col]["Efficiency (nits/lm)"].replace(',', '')) for col in results.keys()]) / len(results)
+            summary_table["Common"] = {
+                "H-FOV": f"{np.min(ch):.2f}°~{np.max(ch):.2f}°", 
+                "V-FOV": f"{np.min(cv):.2f}°~{np.max(cv):.2f}°", 
+                "Max Hop": "-", 
+                "Min Overlap": "-", 
+                "Pass": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%",
+                "Efficiency (nits/lm)": f"{c_nits:,.0f}"
+            }
             
         st.table(pd.DataFrame(summary_table))
 
