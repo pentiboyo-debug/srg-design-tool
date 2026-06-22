@@ -91,8 +91,7 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     G_ICG_x, G_ICG_y = m_order * (2*math.pi/wl_dict["Lambda_ICG"]) * np.array([math.cos(math.radians(a_icg)), math.sin(math.radians(a_icg))])
     G_EPE_x, G_EPE_y = (0, 0)
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
-        G_EPE_mag = 2 * math.pi / wl_dict["Lambda_EPE"]
-        G_EPE_x, G_EPE_y = G_EPE_mag * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
+        G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
     G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
     
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 1, 1)), np.radians(np.arange(v_min, v_max + 1, 1)))
@@ -135,7 +134,6 @@ single_layer_sync = st.sidebar.checkbox("Single Layer 모드 (RGB 동기화)", v
 coord_sys = st.sidebar.radio("K-Space 좌표계", ["절대 파수 (nm⁻¹)", "정규화 파수 (Direction Cosine)"], index=1, horizontal=True, key="coord_sys")
 
 st.sidebar.markdown("---")
-# [수정] 굴절률 입력부에 실수형 포맷 '%.2f' 명시적 적용
 n_d_in = dual_input("기본 굴절률 (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("아베수 (Abbe Vd)", 10.0, 100.0, 35.0, 1.0, "abbe_v", "%.1f")
 thickness_in = dual_input("현재 두께 t (mm)", 0.1, 3.0, 0.40, 0.01, "thickness", "%.2f") 
@@ -145,7 +143,6 @@ v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 1, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
 st.sidebar.markdown("---")
-# [수정] 각도 파라미터들의 스텝을 0.01로 세분화하고 소수점 2자리 포맷('%.2f') 지정
 angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
 angle_epe = dual_input("EPE 벡터 방향 (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f") if "Path B" in path_choice else 0.0
 angle_oc = dual_input("OC 벡터 방향 (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f")
