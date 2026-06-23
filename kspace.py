@@ -109,7 +109,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     hop_dist = 2 * t_mm * (np.sqrt(kx_epe**2 + ky_epe**2) / np.maximum(kz_epe, 1e-10))
     mask_0, mask_1, mask_2, mask_3 = np.ones_like(kx_in, dtype=bool), tir_mask_icg, tir_mask_icg & tir_mask_epe, tir_mask_icg & tir_mask_epe & tir_mask_oc & (hop_dist <= epd_limit)
     
-    # [3번 전면 수정] 센터 필드 (H=0.0°, V=0.0°) 인덱스를 엄밀히 역추적
     c_idx_v = np.argmin(np.abs(np.degrees(V_mesh[:, 0])))
     c_idx_h = np.argmin(np.abs(np.degrees(H_mesh[0, :])))
     
@@ -144,11 +143,11 @@ h_fov = dual_range_input("H FOV 범위 (°)", -60, 60, (-30, 30), 0.01, "h_fov")
 v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
-# [1번 수정 완료] UI 누락 방지를 위한 안전한 함수 직접 파라미터 매핑 배치
+# [1번 버그 패치 완료] 사이드바 레이아웃 충돌 방지를 위해, 직관적인 독립 수치 입력단 구조로 개정 배치
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler 영역 크기 설정**")
-oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f")
-oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f")
+oc_width = st.sidebar.slider("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, format="%.1f")
+oc_height = st.sidebar.slider("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, format="%.1f")
 
 st.sidebar.markdown("---")
 angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
@@ -221,7 +220,7 @@ else:
             ht = [f"H:{h:.2f} V:{v:.2f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
             fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Output", text=ht, hoverinfo="text"))
 
-            # [3번 수정 완료] 화살표 기준점을 센터 필드로 강제 지정하여 정밀 매핑 시각화
+            # [3번 수정 복구 확인 완료] 정중앙 센터 필드 인덱스를 바탕으로 화살표 작도 연동
             if (target != "RGB 통합 뷰 (Overlap)") or (cn == "G"):
                 if r["c_ray"]:
                     c = r["c_ray"]
@@ -249,17 +248,15 @@ else:
                 v_span_rad = np.radians(np.max(vv) - np.min(vv))
                 omega = 4.0 * math.asin(math.sin(h_span_rad / 2.0) * math.sin(v_span_rad / 2.0)) if (h_span_rad > 0 and v_span_rad > 0) else 1e-6
                 
-                # [2번 반영] 엄밀해진 전반사 전파 Loss 모델 계산식 (L=40mm 표준 도파 거리 기준 고도화)
+                # [2번 전반사 Loss 연산 로직 완벽 연동 가동] 
                 c_ray = r["c_ray"]
                 k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
                 k_z = c_ray["kz_icg"]
                 
-                # 튕김 횟수 및 실질 유리 매질 흡수 경로 연산
                 prop_distance_mm = 40.0 
                 num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
                 bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
                 
-                # 유리 내부 손실 계수 가설 적용 (바운스당 계면 반사율 99.8%, 매질 흡수 mm당 0.1% 손실)
                 tir_loss_factor = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_length_mm)
                 
                 lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
@@ -292,7 +289,7 @@ else:
             
         st.table(pd.DataFrame(summary_table))
 
-# --- XZ 단면 탭 및 스윕 분석 탭 (기존 소스코드 마감 로직 완벽 보존) ---
+    # --- XZ 단면 탭 ---
     with tab_xz:
         target_xz = st.selectbox("XZ 시각화 대상", viz_options, index=len(viz_options)-1, key="xz_sel")
         fig_xz = go.Figure(); max_kz = 0
@@ -318,6 +315,7 @@ else:
         fig_xz.update_layout(title=f"K-Space XZ - 중심 시야각(0°) 궤적 ({coord_sys})", xaxis=dict(range=[-max_kz*1.1, max_kz*1.1], scaleanchor="y"), yaxis=dict(range=[0, max_kz*1.1]), height=600, plot_bgcolor="white")
         st.plotly_chart(fig_xz, use_container_width=True)
 
+    # --- 스윕 분석 탭 ---
     with tab_sweep:
         st.markdown("#### 두께 스윕 분석 (EPD 기반 탈락량 확인)")
         c1, c2, c3 = st.columns(3); ts, te, tp = c1.number_input("시작", 0.1, 3.0, 0.2), c2.number_input("종료", 0.1, 3.0, 1.0), c3.number_input("스텝", 0.01, 1.0, 0.05)
