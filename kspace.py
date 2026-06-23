@@ -143,11 +143,11 @@ h_fov = dual_range_input("H FOV 범위 (°)", -60, 60, (-30, 30), 0.01, "h_fov")
 v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
-# [1번 버그 패치 완료] 사이드바 레이아웃 충돌 방지를 위해, 직관적인 독립 수치 입력단 구조로 개정 배치
+# [수정 반영] 슬라이더와 직접입력(number_input) 기능이 양방향 동기화 처리된 크기 설정 UI 배치
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler 영역 크기 설정**")
-oc_width = st.sidebar.slider("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, format="%.1f")
-oc_height = st.sidebar.slider("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, format="%.1f")
+oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f")
+oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f")
 
 st.sidebar.markdown("---")
 angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
@@ -220,7 +220,6 @@ else:
             ht = [f"H:{h:.2f} V:{v:.2f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
             fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Output", text=ht, hoverinfo="text"))
 
-            # [3번 수정 복구 확인 완료] 정중앙 센터 필드 인덱스를 바탕으로 화살표 작도 연동
             if (target != "RGB 통합 뷰 (Overlap)") or (cn == "G"):
                 if r["c_ray"]:
                     c = r["c_ray"]
@@ -248,7 +247,6 @@ else:
                 v_span_rad = np.radians(np.max(vv) - np.min(vv))
                 omega = 4.0 * math.asin(math.sin(h_span_rad / 2.0) * math.sin(v_span_rad / 2.0)) if (h_span_rad > 0 and v_span_rad > 0) else 1e-6
                 
-                # [2번 전반사 Loss 연산 로직 완벽 연동 가동] 
                 c_ray = r["c_ray"]
                 k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
                 k_z = c_ray["kz_icg"]
