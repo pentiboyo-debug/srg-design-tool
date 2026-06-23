@@ -143,11 +143,26 @@ h_fov = dual_range_input("H FOV 범위 (°)", -60, 60, (-30, 30), 0.01, "h_fov")
 v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
-# [수정 반영] 슬라이더와 직접입력(number_input) 기능이 양방향 동기화 처리된 크기 설정 UI 배치
+# [완벽 수정] 컬럼 위젯 간섭을 방지하기 위해 사이드바 전용의 직관적 독립 연동 아키텍처로 전면 수정
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler 영역 크기 설정**")
-oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f")
-oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f")
+
+if "oc_width_val" not in st.session_state: st.session_state["oc_width_val"] = 30.0
+if "oc_height_val" not in st.session_state: st.session_state["oc_height_val"] = 20.0
+
+st.markdown("<div style='font-size:11px; margin-top:5px;'>OC 가로 크기 (mm)</div>", unsafe_allow_html=True)
+c_w1, c_w2 = st.sidebar.columns([7, 3])
+with c_w1: oc_width_sld = st.slider("W_sld", 5.0, 100.0, float(st.session_state["oc_width_val"]), 0.1, key="oc_w_slider", label_visibility="collapsed")
+with c_w2: oc_width_num = st.number_input("W_num", 5.0, 100.0, float(st.session_state["oc_w_slider"]), 0.1, key="oc_w_num", label_visibility="collapsed", format="%.1f")
+st.session_state["oc_width_val"] = oc_width_num
+oc_width = oc_width_num
+
+st.markdown("<div style='font-size:11px; margin-top:5px;'>OC 세로 크기 (mm)</div>", unsafe_allow_html=True)
+c_h1, c_h2 = st.sidebar.columns([7, 3])
+with c_h1: oc_height_sld = st.slider("H_sld", 5.0, 100.0, float(st.session_state["oc_height_val"]), 0.1, key="oc_h_slider", label_visibility="collapsed")
+with c_h2: oc_height_num = st.number_input("H_num", 5.0, 100.0, float(st.session_state["oc_h_slider"]), 0.1, key="oc_h_num", label_visibility="collapsed", format="%.1f")
+st.session_state["oc_height_val"] = oc_height_num
+oc_height = oc_height_num
 
 st.sidebar.markdown("---")
 angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
