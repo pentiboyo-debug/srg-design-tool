@@ -59,11 +59,16 @@ def update_from_num(k):
     st.session_state[f"{k}_slider"] = float(val)
     update_sync(k, val)
 
-def dual_input(label, min_val, max_val, default_val, step, k, fmt=None):
+# [수정] 사이드바 내부와 메인화면 어디서든 독립 구동할 수 있도록 전용 컨텍스트 기반 dual_input 컴포넌트 마이그레이션
+def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=False):
     if f"{k}_slider" not in st.session_state: st.session_state[f"{k}_slider"] = float(default_val)
     if f"{k}_num" not in st.session_state: st.session_state[f"{k}_num"] = float(default_val)
-    st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
-    col1, col2 = st.columns([7, 3])
+    
+    # 사이드바 여부에 따라 타깃 컨테이너 지정
+    target = st.sidebar if sidebar else st
+    target.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
+    
+    col1, col2 = target.columns([7, 3])
     with col1: st.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=update_from_slider, args=(k,), label_visibility="collapsed", format=fmt)
     with col2: st.number_input(label, float(min_val), float(max_val), key=f"{k}_num", step=float(step), on_change=update_from_num, args=(k,), label_visibility="collapsed", format=fmt)
     return st.session_state[f"{k}_slider"]
@@ -143,16 +148,16 @@ h_fov = dual_range_input("H FOV 범위 (°)", -60, 60, (-30, 30), 0.01, "h_fov")
 v_fov = dual_range_input("V FOV 범위 (°)", -60, 60, (-20, 20), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("주 회절 차수 (m)", [1, -1, 2, -2], index=st.session_state.get("m_order_idx", 0), key="m_order_select")
 
-# [완벽 동기화 복구 패치] 수치 입력과 슬라이더 간의 연동이 따로 노는 버그를 dual_input 공용 엔진 연동으로 완벽 해결
+# [버그 패치 완료] 'sidebar=True' 플래그를 추가하여 아웃커플러(OC) 입력 파트가 확실하게 좌측 사이드바 내에 안착하고 연동되도록 긴급 조치
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler 영역 크기 설정**")
-oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f")
-oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f")
+oc_width = dual_input("OC 가로 크기 (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f", sidebar=True)
+oc_height = dual_input("OC 세로 크기 (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f", sidebar=True)
 
 st.sidebar.markdown("---")
-angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f")
-angle_epe = dual_input("EPE 벡터 방향 (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f") if "Path B" in path_choice else 0.0
-angle_oc = dual_input("OC 벡터 방향 (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f")
+angle_icg = dual_input("ICG 벡터 방향 (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f", sidebar=True)
+angle_epe = dual_input("EPE 벡터 방향 (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
+angle_oc = dual_input("OC 벡터 방향 (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f", sidebar=True)
 
 st.sidebar.markdown("---")
 def get_wl_inputs(name, def_l, def_p, n_d, V_d):
@@ -160,18 +165,18 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
     if act:
         with st.sidebar.container():
             st.markdown(f"**[{name}] 세부 설정**")
-            wl = dual_input("λ (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl", "%.2f")
+            wl = dual_input("λ (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl", "%.2f", sidebar=True)
             limit_p = wl / get_refractive_index(wl, n_d, V_d)
-            icg_p = dual_input("Λ_ICG (nm)", 100.0, 1000.0, def_p, 0.01, f"{name}_icg", "%.2f")
+            icg_p = dual_input("Λ_ICG (nm)", 100.0, 1000.0, def_p, 0.01, f"{name}_icg", "%.2f", sidebar=True)
             if icg_p < limit_p: st.error(f"⚠️ 회절한계: 최소 {limit_p:.2f}nm 필요")
             else: st.caption(f"물리적 한계 주기: {limit_p:.2f}nm")
-            epe_p = dual_input("Λ_EPE (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_epe", "%.2f") if "Path B" in path_choice else None
-            oc_p = dual_input("Λ_OC (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_oc", "%.2f")
+            epe_p = dual_input("Λ_EPE (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_epe", "%.2f", sidebar=True) if "Path B" in path_choice else None
+            oc_p = dual_input("Λ_OC (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_oc", "%.2f", sidebar=True)
             
             st.markdown("*회절 효율 설정 (0.00 ~ 1.00)*")
-            eff_icg = dual_input("ICG 회절 효율", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f")
-            eff_epe = dual_input("EPE 회절 효율", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f") if "Path B" in path_choice else 1.00
-            eff_oc = dual_input("OC 회절 효율", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f")
+            eff_icg = dual_input("ICG 회절 효율", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
+            eff_epe = dual_input("EPE 회절 효율", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00
+            eff_oc = dual_input("OC 회절 효율", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
             return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
