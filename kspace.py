@@ -99,7 +99,7 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # 부호 보정 적용 (지면 방향 = 음수 매칭)
+    # 부호 보정 적용 (지면 방향 = 음수 매칭 완료)
     k_x_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_x))
     k_y_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_y))
     
@@ -160,12 +160,7 @@ if "srg_cached_results" not in st.session_state: st.session_state["srg_cached_re
 if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
 if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
 
-# --- 6. Core Controller Pre-calculations (연산 순서 뒤틀림 수정 핵심 블록) ---
-# 사용자가 사이드바 하단의 버튼을 누르면, UI를 그리기 전에 세션 데이터 스펙을 사전에 계산(Pre-computation)하여 단일 루프 동기화 확보
-# 이 구조 변경을 통해 UI 레이아웃 변경 없이 실시간 스펙 고정 렉 버그를 완전 제거함
-query_params = st.context. some_attr if hasattr(st, "context") else None # Dummy safe-check
-
-# --- 7. Sidebar Layout UI Panel Tree ---
+# --- 6. Sidebar Layout UI Panel Tree ---
 st.sidebar.markdown("### 💾 Configuration Management")
 col_s1, col_s2 = st.sidebar.columns(2)
 with col_s1: st.sidebar.download_button("Save Setup", data=export_settings(), file_name="waveguide_config.json", use_container_width=True)
@@ -216,7 +211,6 @@ if auto_oc_angle:
         custom_out_x = dual_input("Target Horizontal Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_x", "%.1f", sidebar=True)
         custom_out_y = dual_input("Target Vertical Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_y", "%.1f", sidebar=True)
         
-    # 현재 시점에 저장되어 있는 가장 최신의 정밀 연산 결과값을 불러와 사이드바 UI에 즉각 주사 (딜레이 프리 바인딩)
     angle_oc = st.session_state["auto_oc_vector_ang"]
     auto_oc_line_ang = (angle_oc + 90.0) % 180.0
     theme_color = "#4b96ff" if oc_find_mode == "Specular Target" else "#ff964b"
@@ -264,8 +258,7 @@ wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
 st.sidebar.markdown("---")
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
 
-# --- 8. Synchronized Processing Pipeline Core Trigger ---
-# 사용자가 런 버튼을 눌렀을 때의 임계 연산을 즉각 캐싱하고 리런(Rerun) 유도 코드를 추가하여 사이드바 고정 현상을 완전 디버깅함
+# --- 7. Synchronized Processing Pipeline Core Trigger ---
 if run_simulation_trigger:
     results = {}
     for data in [wl_R, wl_G, wl_B]:
@@ -276,10 +269,9 @@ if run_simulation_trigger:
                 st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
                 st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
     st.session_state["srg_cached_results"] = results
-    # 사이드바 텍스트 영역에 변경 사항을 '즉시' 업데이트 시키기 위한 상태 동기화용 Rerun 트리거
     st.rerun()
 
-# --- 9. Main Dashboard Visualization View ---
+# --- 8. Main Dashboard Visualization View ---
 results = st.session_state["srg_cached_results"]
 
 if results is not None:
