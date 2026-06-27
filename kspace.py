@@ -99,7 +99,7 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [부호 완전 교정 블록] +입력 시 +Y로 직관적으로 정렬 이동하도록 감산(-)을 가산(+)으로 변경 완료
+    # [단위 수정 완료] 각도 스케일 꼬임 제거를 위해 sin 내부 단위를 물리 법칙에 맞춰 동형화 완료
     k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
     k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
     
@@ -125,11 +125,11 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
+    # 메쉬 각도 생성 단계와 sin 가산 단계를 분리하여 라디안 중복 왜곡 에러 원천 차단
+    H_deg, V_deg = np.meshgrid(np.arange(h_min, h_max + 0.1, 0.5), np.arange(v_min, v_max + 0.1, 0.5))
     
-    # 메쉬 그리드 필드 전체 영역의 틸트 부호 매칭 정형화 완료
-    kx_in = k0 * np.sin(H_mesh + math.radians(le_tilt_x))
-    ky_in = k0 * np.sin(V_mesh + math.radians(le_tilt_y))
+    kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
+    ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
@@ -144,8 +144,8 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     hop_dist = 2 * t_mm * (np.sqrt(kx_epe**2 + ky_epe**2) / np.maximum(kz_epe, 1e-10))
     mask_0, mask_1, mask_2, mask_3 = np.ones_like(kx_in, dtype=bool), tir_mask_icg, tir_mask_icg & tir_mask_epe, tir_mask_icg & tir_mask_epe & tir_mask_oc & (hop_dist <= epd_limit)
     
-    c_idx_v = np.argmin(np.abs(np.degrees(V_mesh[:, 0])))
-    c_idx_h = np.argmin(np.abs(np.degrees(H_mesh[0, :])))
+    c_idx_v = np.argmin(np.abs(V_deg[:, 0]))
+    c_idx_h = np.argmin(np.abs(H_deg[0, :]))
     
     c_ray = {
         "kx_in": kx_in[c_idx_v, c_idx_h], "ky_in": ky_in[c_idx_v, c_idx_h], "kz_in": kz_in[c_idx_v, c_idx_h],
@@ -154,7 +154,7 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
         "kx_oc": kx_oc[c_idx_v, c_idx_h], "ky_oc": ky_oc[c_idx_v, c_idx_h], "kz_oc": kz_oc[c_idx_v, c_idx_h]
     }
         
-    return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": np.degrees(H_mesh), "V_mesh": np.degrees(V_mesh), "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x, "Lambda_ICG": wl_dict["Lambda_ICG"], "Lambda_EPE": wl_dict["Lambda_EPE"], "Lambda_OC": wl_dict["Lambda_OC"], "eff_icg": wl_dict["eff_icg"], "eff_epe": wl_dict["eff_epe"], "eff_oc": wl_dict["eff_oc"], "calculated_a_oc": a_oc}
+    return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": H_deg, "V_mesh": V_deg, "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x, "Lambda_ICG": wl_dict["Lambda_ICG"], "Lambda_EPE": wl_dict["Lambda_EPE"], "Lambda_OC": wl_dict["Lambda_OC"], "eff_icg": wl_dict["eff_icg"], "eff_epe": wl_dict["eff_epe"], "eff_oc": wl_dict["eff_oc"], "calculated_a_oc": a_oc}
 
 # --- 5. Session State Initialization for Cache Sync ---
 if "srg_cached_results" not in st.session_state: st.session_state["srg_cached_results"] = None
@@ -285,12 +285,15 @@ if results is not None:
     # --- XY Plane Tab Layout Panel ---
     with tab_xy:
         target = st.selectbox("XY Visualization Target", viz_options, index=len(viz_options)-1, key="xy_sel")
-        fig_xy = go.Figure(); max_k = 0; common_mask = None
+        fig_xy = go.Figure(); common_mask = None
         plots = list(results.values()) if target == "RGB Overlap View" else [results[target]]
         
         for r in plots:
-            cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
-            max_k = max(max_k, r["k_wg_max"]/sf)
+            cn, pc = r["color"], c_map[r["color"]]
+            # 정규화 모드일 때 스케일 인자 설정 (k0로 나누면 정확히 Direction Cosine 스케일로 정규화)
+            sf = r["k0"] if coord_sys == "Normalized Wavevector (Direction Cosine)" else 1.0
+            
+            # 기하 가이드 링 드로잉 (Air Circle=1.0, Substrate TIR Circle=굴절률)
             fig_xy.add_shape(type="circle", x0=-r["k0"]/sf, y0=-r["k0"]/sf, x1=r["k0"]/sf, y1=r["k0"]/sf, line_color=pc, line_dash="dash", opacity=0.4)
             fig_xy.add_shape(type="circle", x0=-r["k_wg_max"]/sf, y0=-r["k_wg_max"]/sf, x1=r["k_wg_max"]/sf, y1=r["k_wg_max"]/sf, line_color=pc, fillcolor=pc, opacity=0.03)
             m0, m1, m2, m3 = r["mask_0"], r["mask_1"], r["mask_2"], r["mask_3"]
@@ -314,8 +317,9 @@ if results is not None:
                     for i in range(len(pts)-1):
                         fig_xy.add_annotation(x=pts[i+1][0]/sf, y=pts[i+1][1]/sf, ax=pts[i][0]/sf, ay=pts[i][1]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, opacity=0.8)
         
-        lim = max_k * 1.1
-        fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
+        # [스케일 패치] 정규화 모드 시 스케일을 굴절률 n 마진에 맞춰 [-2.0, 2.0] 대칭 공간으로 딱 고정함
+        lim = 2.0 if coord_sys == "Normalized Wavevector (Direction Cosine)" else 0.025
+        fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1, title=f"Kx ({coord_sys})"), yaxis=dict(range=[-lim, lim], title=f"Ky ({coord_sys})"), width=800, height=800, plot_bgcolor="white")
         st.plotly_chart(fig_xy, use_container_width=True)
         
         # --- Grating Specifications Table Engine ---
@@ -386,7 +390,7 @@ if results is not None:
         plots_xz = list(results.values()) if target_xz == "RGB Overlap View" else [results[target_xz]]
         arc_ang = np.linspace(0, np.pi, 100)
         for r in plots_xz:
-            cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
+            cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "Normalized Wavevector (Direction Cosine)" else 1.0
             max_kz = max(max_kz, r["k_wg_max"]/sf)
             fig_xz.add_trace(go.Scatter(x=(r['k0']/sf)*np.cos(arc_ang), y=(r['k0']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, dash="dash"), showlegend=False))
             fig_xz.add_trace(go.Scatter(x=(r['k_wg_max']/sf)*np.cos(arc_ang), y=(r['k_wg_max']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, width=1), fill='tonexty', fillcolor=f"rgba({255 if cn=='R' else 0},{255 if cn=='G' else 0},{255 if cn=='B' else 0},0.04)", showlegend=False))
@@ -402,7 +406,9 @@ if results is not None:
                 fig_xz.add_annotation(x=c["kx_oc"]/sf, y=curr_kz/sf, ax=curr_kx/sf, ay=curr_kz/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="purple", text="OC")
                 fig_xz.add_trace(go.Scatter(x=[c["kx_oc"]/sf, c["kx_oc"]/sf], y=[curr_kz/sf, c["kz_oc"]/sf], mode="lines", line=dict(color="purple", dash="dot"), showlegend=False))
                 fig_xz.add_trace(go.Scatter(x=[c["kx_in"]/sf, c["kx_oc"]/sf], y=[c["kz_in"]/sf, c["kz_oc"]/sf], mode="markers", marker=dict(size=10, color=pc, symbol="star"), name=f"{cn} Central Field Ray"))
-        fig_xz.update_layout(title=f"K-Space XZ Cross-Section View - Central Gaze Path ({coord_sys})", xaxis=dict(range=[-max_kz*1.1, max_kz*1.1], scaleanchor="y"), yaxis=dict(range=[0, max_kz*1.1]), height=600, plot_bgcolor="white")
+        
+        lim_z = 2.0 if coord_sys == "Normalized Wavevector (Direction Cosine)" else max_kz * 1.1
+        fig_xz.update_layout(title=f"K-Space XZ Cross-Section View - Central Gaze Path ({coord_sys})", xaxis=dict(range=[-lim_z, lim_z], scaleanchor="y"), yaxis=dict(range=[0, lim_z]), height=600, plot_bgcolor="white")
         st.plotly_chart(fig_xz, use_container_width=True)
 
     # --- Thickness Sweep Tab Layout Panel ---
