@@ -28,6 +28,7 @@ def export_settings():
             settings[key] = val
     settings.update({
         "path_choice": st.session_state.get("path_choice"),
+        "grating_face_mode": st.session_state.get("grating_face_mode", "Transmission (Front Face)"),
         "coord_sys": st.session_state.get("coord_sys"),
         "single_layer_sync": st.session_state.get("single_layer_sync"),
         "m_order_select": st.session_state.get("m_order_select", 1),
@@ -87,34 +88,41 @@ def get_refractive_index(lam, n_d, V_d):
     B = (n_d - 1) / V_d * (486.1**2 * 656.3**2) / (486.1**2 - 656.3**2) * 1e-6
     return (n_d - B / (589.3/1000)**2) + B / (lam/1000)**2
 
-def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag, oc_find_mode, custom_out_x, custom_out_y):
+def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, grating_face_mode, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag, oc_find_mode, custom_out_x, custom_out_y):
     if not wl_dict["active"]: return None
     lam = wl_dict["lambda"]; n_lam = get_refractive_index(lam, n_d, V_d); k0 = 2 * math.pi / lam; k_wg_max = n_lam * k0
     
-    # 1. ICG Grating Vector Setup
+    # 1. ICG / EPE Grating Vector Setup
     G_ICG_x, G_ICG_y = m_order * (2*math.pi/wl_dict["Lambda_ICG"]) * np.array([math.cos(math.radians(a_icg)), math.sin(math.radians(a_icg))])
-    
-    # 2. EPE Grating Vector Setup
     G_EPE_x, G_EPE_y = (0.0, 0.0)
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [부호 튜닝 완전 판정] 지면 방향(- 입력 시) 입사 파수가 정확하게 음수 영역(-Y)을 갖도록 대치
-    k_x_center_in = k0 * math.sin(math.radians(le_tilt_x))
-    k_y_center_in = k0 * math.sin(math.radians(le_tilt_y))
+    # [수정 블록] 반사형(후면 가공) 모드 선택 시 스넬의 법칙에 의한 기판 내부 굴절압축 물리 구현
+    if grating_face_mode == "Reflection (Back Face)":
+        # 기판 내부에서의 굴절 각도 유도 적용 (Snell's Law: sin_theta_glass = sin_theta_air / n)
+        k_x_center_in = k0 * (math.sin(math.radians(le_tilt_x)) / n_lam)
+        k_y_center_in = k0 * (math.sin(math.radians(le_tilt_y)) / n_lam)
+    else:
+        # 투과형(전면 가공) 모드: 공기 중 입사 파수 벡터 그대로 진입
+        k_x_center_in = k0 * math.sin(math.radians(le_tilt_x))
+        k_y_center_in = k0 * math.sin(math.radians(le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
     if auto_oc_flag:
         if oc_find_mode == "Specular Target":
-            # 거울반사 조건: 입사된 파수의 방향 성분이 탈출단에서도 동일하게 승산됨 (k_out = k_in)
             k_x_target = k_x_center_in
             k_y_target = k_y_center_in
         else:
-            # Custom 지정 조건: 사용자가 명시한 커스텀 탈출 화각 파수 바인딩
-            k_x_target = k0 * math.sin(math.radians(custom_out_x))
-            k_y_target = k0 * math.sin(math.radians(custom_out_y))
+            # Custom 각도 타깃 지정 조건식 동기화
+            if grating_face_mode == "Reflection (Back Face)":
+                k_x_target = k0 * (math.sin(math.radians(custom_out_x)) / n_lam)
+                k_y_target = k0 * (math.sin(math.radians(custom_out_y)) / n_lam)
+            else:
+                k_x_target = k0 * math.sin(math.radians(custom_out_x))
+                k_y_target = k0 * math.sin(math.radians(custom_out_y))
             
         G_OC_x = k_x_target - k_x_center_epe
         G_OC_y = k_y_target - k_y_center_epe
@@ -127,11 +135,16 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
+    # FOV 전체 메쉬리드 맵에도 투과형/반사형 물리 법칙 일괄 투영
     H_deg, V_deg = np.meshgrid(np.arange(h_min, h_max + 0.1, 0.5), np.arange(v_min, v_max + 0.1, 0.5))
     
-    # 메쉬 입사 전체 영역 틸트 성분 대칭 변환 일치화 완료
-    kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
-    ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
+    if grating_face_mode == "Reflection (Back Face)":
+        kx_in = k0 * (np.sin(np.radians(H_deg + le_tilt_x)) / n_lam)
+        ky_in = k0 * (np.sin(np.radians(V_deg + le_tilt_y)) / n_lam)
+    else:
+        kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
+        ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
+        
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
@@ -173,6 +186,10 @@ with col_s2:
 
 st.sidebar.markdown("---")
 path_choice = st.sidebar.radio("Grating Path Type", ["Path A (ICG→OC)", "Path B (ICG→EPE→OC)"], index=1, horizontal=True, key="path_choice")
+
+# [신규 기능 추가] 투과형(전면) vs 반사형(후면) 그레이팅 물리 선택 엔진 UI 옵션 바인딩 완료
+grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=0, key="grating_face_mode")
+
 single_layer_sync = st.sidebar.checkbox("Single Layer Mode (RGB Sync)", value=True, key="single_layer_sync")
 coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector (nm⁻¹)", "Normalized Wavevector (Direction Cosine)"], index=1, horizontal=True, key="coord_sys")
 
@@ -265,7 +282,7 @@ run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_conta
 if run_simulation_trigger:
     results = {}
     for data in [wl_R, wl_G, wl_B]:
-        res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
+        res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, grating_face_mode, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
         if res:
             results[data["color"]] = res
             if auto_oc_angle:
@@ -420,7 +437,7 @@ if results is not None:
                 d = {"t": round(t,3)}; cm = None
                 for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
                     if wd["active"]:
-                        rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
+                        rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, grating_face_mode, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
                         if cm is None: cm = mt.copy()
                         else: cm &= mt
                         vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
