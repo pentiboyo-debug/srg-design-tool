@@ -98,17 +98,20 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # Central field ray tracking including Light Engine oblique tilt offsets
+    # Central field ray input 파수 연산 (Light Engine 틸트 반영)
     k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
     k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
-    # Auto-match condition: Target OC G-vector forces central field ray back to normal vector (0,0)
+    # [수정] 0도 수직 출광이 아닌 입사 사입사각 대비 완벽 대칭 구조인 '거울반사 출광 스펙'으로 자동 추적 엔진 개정
     if auto_oc_flag:
-        G_OC_x = -k_x_center_epe
-        G_OC_y = -k_y_center_epe
+        k_x_specular_target = -k_x_center_in
+        k_y_specular_target = -k_y_center_in
+        
+        G_OC_x = k_x_specular_target - k_x_center_epe
+        G_OC_y = k_y_specular_target - k_y_center_epe
         G_OC_mag = math.sqrt(G_OC_x**2 + G_OC_y**2)
         if G_OC_mag > 0:
             wl_dict["Lambda_OC"] = (2 * math.pi) / G_OC_mag
@@ -188,18 +191,17 @@ st.sidebar.markdown("**🔮 Grating Vector Rotation Alignment**")
 angle_icg = dual_input("ICG Vector Angle (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f", sidebar=True)
 angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
 
-# Initialize global auto tracking specs inside cache session to print out on sidebar dynamically
 if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
 if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
 
-auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle (Zero-tilt Target)", value=False, key="auto_oc_angle")
+# [수정] 효율 손실을 방지하는 거울반사 대칭 출광 기반 자동 추적 라벨명 업그레이드
+auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle (Specular Target)", value=False, key="auto_oc_angle")
 if auto_oc_angle:
     angle_oc = st.session_state["auto_oc_vector_ang"]
     auto_oc_line_ang = (angle_oc + 90.0) % 180.0
-    # [New Feature] Render auto-calculated optimized specifications block in red warning box on sidebar panel
     st.sidebar.markdown(f"""
-    <div style="background-color:rgba(255, 75, 75, 0.08); border:1px solid #ff4b4b; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
-        <div style="font-size:11px; color:#ff4b4b; font-weight:bold;">🔒 OC Auto-Find Spec (Locked)</div>
+    <div style="background-color:rgba(75, 150, 255, 0.08); border:1px solid #4b96ff; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
+        <div style="font-size:11px; color:#4b96ff; font-weight:bold;">🔒 OC Specular Auto-Find (Locked)</div>
         <div style="font-size:12px; font-weight:600; margin-top:3px;">• Target Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
         <div style="font-size:12px; font-weight:600;">• Vector Angle: {angle_oc:.2f}°</div>
         <div style="font-size:12px; font-weight:600;">• Line Angle: {auto_oc_line_ang:.2f}°</div>
@@ -255,7 +257,6 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
                 if auto_oc_angle:
                     data["Lambda_OC"] = res["Lambda_OC"]
                     angle_oc = res["calculated_a_oc"]
-                    # Update session state cache to print specs on sidebar immediately upon next click trigger
                     st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
                     st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
         st.session_state["srg_cached_results"] = results
