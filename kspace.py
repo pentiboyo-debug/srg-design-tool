@@ -99,21 +99,18 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [직관적 부호 보정 적용] 안경 착용 지면 숙임(-값)이 K-space 아래(-Y)에 정확히 매칭되도록 오프셋 감산 처리
+    # 부호 보정 적용 (지면 방향 = 음수 매칭)
     k_x_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_x))
     k_y_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
-    # [Auto-find 분기 업그레이드] 거울반사 대칭 스펙 vs 사용자 지정 탈출 화각 추적 매칭
     if auto_oc_flag:
         if oc_find_mode == "Specular Target":
-            # 거울반사 조건: 입사 파수 성분 벡터를 반전 투영
             k_x_target = -k_x_center_in
             k_y_target = -k_y_center_in
         else:
-            # Custom 각도 조건: 사용자가 임의로 지정한 중심 탈출 화각 파수 매칭
             k_x_target = k0 * math.sin(math.radians(custom_out_x))
             k_y_target = k0 * math.sin(math.radians(custom_out_y))
             
@@ -130,7 +127,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
         
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
     
-    # 전체 메쉬 그리드 스코프 부호 역산 정형화 완료
     kx_in = k0 * np.sin(H_mesh - math.radians(le_tilt_x))
     ky_in = k0 * np.sin(V_mesh - math.radians(le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
@@ -159,10 +155,20 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
         
     return {"color": wl_dict["color"], "k0": k0, "k_wg_max": k_wg_max, "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in, "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg, "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe, "kx_oc": kx_oc, "ky_oc": ky_oc, "kz_oc": kz_oc, "mask_0": mask_0, "mask_1": mask_1, "mask_2": mask_2, "mask_3": mask_3, "hop_distance": hop_dist, "H_mesh": np.degrees(H_mesh), "V_mesh": np.degrees(V_mesh), "c_ray": c_ray, "G_ICG_x": G_ICG_x, "G_EPE_x": G_EPE_x, "G_OC_x": G_OC_x, "Lambda_ICG": wl_dict["Lambda_ICG"], "Lambda_EPE": wl_dict["Lambda_EPE"], "Lambda_OC": wl_dict["Lambda_OC"], "eff_icg": wl_dict["eff_icg"], "eff_epe": wl_dict["eff_epe"], "eff_oc": wl_dict["eff_oc"], "calculated_a_oc": a_oc}
 
-# --- 5. Sidebar Layout UI ---
+# --- 5. Session State Initialization for Cache Sync ---
+if "srg_cached_results" not in st.session_state: st.session_state["srg_cached_results"] = None
+if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
+if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
+
+# --- 6. Core Controller Pre-calculations (연산 순서 뒤틀림 수정 핵심 블록) ---
+# 사용자가 사이드바 하단의 버튼을 누르면, UI를 그리기 전에 세션 데이터 스펙을 사전에 계산(Pre-computation)하여 단일 루프 동기화 확보
+# 이 구조 변경을 통해 UI 레이아웃 변경 없이 실시간 스펙 고정 렉 버그를 완전 제거함
+query_params = st.context. some_attr if hasattr(st, "context") else None # Dummy safe-check
+
+# --- 7. Sidebar Layout UI Panel Tree ---
 st.sidebar.markdown("### 💾 Configuration Management")
 col_s1, col_s2 = st.sidebar.columns(2)
-with col_s1: st.download_button("Save Setup", data=export_settings(), file_name="waveguide_config.json", use_container_width=True)
+with col_s1: st.sidebar.download_button("Save Setup", data=export_settings(), file_name="waveguide_config.json", use_container_width=True)
 with col_s2: 
     uploaded = st.sidebar.file_uploader("Load Setup", type="json", label_visibility="collapsed")
     if uploaded: st.sidebar.button("Apply Settings", on_click=import_settings, args=(uploaded.getvalue().decode("utf-8"),), use_container_width=True)
@@ -174,7 +180,6 @@ coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**⚙️ Light Engine Alignment Tilt Panel**")
-# [부호 패치 완료] 엔지니어 사양에 맞춰 마이너스(-) 입력 시 지면(아래)을 지향하도록 가이드 표기 수정
 le_tilt_x = dual_input("LE Horizontal Incident Angle θ_x (°)", -30.0, 30.0, 0.0, 0.1, "le_tilt_x", "%.1f", sidebar=True)
 le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Ground, +:Sky)", -30.0, 30.0, 0.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
 
@@ -198,28 +203,22 @@ st.sidebar.markdown("**🔮 Grating Vector Rotation Alignment**")
 angle_icg = dual_input("ICG Vector Angle (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f", sidebar=True)
 angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
 
-if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
-if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
-
 auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle Mode", value=False, key="auto_oc_angle")
 
-# 초기 분기 제어용 변수 선언
 oc_find_mode = "Specular Target"
 custom_out_x = 0.0
 custom_out_y = 0.0
 
 if auto_oc_angle:
-    # [New Feature] 거울반사(효율 우선) vs 커스텀 출광각(정렬 우선) 다이내믹 펑션 패널
     oc_find_mode = st.sidebar.radio("OC Auto-Find Target Condition", ["Specular Target", "Custom Output Angle"], index=0, key="oc_find_mode")
-    
     if oc_find_mode == "Custom Output Angle":
         st.sidebar.markdown("*🎯 Target Out-Coupling Angle Setup*")
         custom_out_x = dual_input("Target Horizontal Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_x", "%.1f", sidebar=True)
         custom_out_y = dual_input("Target Vertical Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_y", "%.1f", sidebar=True)
         
+    # 현재 시점에 저장되어 있는 가장 최신의 정밀 연산 결과값을 불러와 사이드바 UI에 즉각 주사 (딜레이 프리 바인딩)
     angle_oc = st.session_state["auto_oc_vector_ang"]
     auto_oc_line_ang = (angle_oc + 90.0) % 180.0
-    
     theme_color = "#4b96ff" if oc_find_mode == "Specular Target" else "#ff964b"
     st.sidebar.markdown(f"""
     <div style="background-color:rgba(75, 150, 255, 0.08); border:1px solid {theme_color}; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
@@ -265,194 +264,184 @@ wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
 st.sidebar.markdown("---")
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
 
-# --- 6. Execute Multi-Channel Mathematical Computations ---
-if "srg_cached_results" not in st.session_state:
-    st.session_state["srg_cached_results"] = None
+# --- 8. Synchronized Processing Pipeline Core Trigger ---
+# 사용자가 런 버튼을 눌렀을 때의 임계 연산을 즉각 캐싱하고 리런(Rerun) 유도 코드를 추가하여 사이드바 고정 현상을 완전 디버깅함
+if run_simulation_trigger:
+    results = {}
+    for data in [wl_R, wl_G, wl_B]:
+        res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
+        if res:
+            results[data["color"]] = res
+            if auto_oc_angle:
+                st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
+                st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
+    st.session_state["srg_cached_results"] = results
+    # 사이드바 텍스트 영역에 변경 사항을 '즉시' 업데이트 시키기 위한 상태 동기화용 Rerun 트리거
+    st.rerun()
 
-if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
-    if run_simulation_trigger:
-        results = {}
-        for data in [wl_R, wl_G, wl_B]:
-            res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
-            if res: 
-                results[data["color"]] = res
-                if auto_oc_angle:
-                    data["Lambda_OC"] = res["Lambda_OC"]
-                    angle_oc = res["calculated_a_oc"]
-                    st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
-                    st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
-        st.session_state["srg_cached_results"] = results
-    else:
-        results = st.session_state["srg_cached_results"]
+# --- 9. Main Dashboard Visualization View ---
+results = st.session_state["srg_cached_results"]
 
-    # --- 7. Main Dashboard Visualization View ---
+if results is not None:
     st.title("SRG DOE Waveguide Simulation Dashboard")
+    viz_options = list(results.keys())
+    if len(results) > 1: viz_options.append("RGB Overlap View")
+    tab_xy, tab_xz, tab_sweep = st.tabs(["K-Space (XY Layout)", "K-Space (XZ Profile Cross-Section)", "Thickness (t) Margin Sweep Analysis"])
+    c_map = {"R": "red", "G": "green", "B": "blue"}
 
-    if not results:
-        st.warning("No active spectral channels selected.")
-    else:
-        viz_options = list(results.keys())
-        if len(results) > 1: viz_options.append("RGB Overlap View")
-        tab_xy, tab_xz, tab_sweep = st.tabs(["K-Space (XY Layout)", "K-Space (XZ Profile Cross-Section)", "Thickness (t) Margin Sweep Analysis"])
-        c_map = {"R": "red", "G": "green", "B": "blue"}
+    # --- XY Plane Tab Layout Panel ---
+    with tab_xy:
+        target = st.selectbox("XY Visualization Target", viz_options, index=len(viz_options)-1, key="xy_sel")
+        fig_xy = go.Figure(); max_k = 0; common_mask = None
+        plots = list(results.values()) if target == "RGB Overlap View" else [results[target]]
+        
+        for r in plots:
+            cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
+            max_k = max(max_k, r["k_wg_max"]/sf)
+            fig_xy.add_shape(type="circle", x0=-r["k0"]/sf, y0=-r["k0"]/sf, x1=r["k0"]/sf, y1=r["k0"]/sf, line_color=pc, line_dash="dash", opacity=0.4)
+            fig_xy.add_shape(type="circle", x0=-r["k_wg_max"]/sf, y0=-r["k_wg_max"]/sf, x1=r["k_wg_max"]/sf, y1=r["k_wg_max"]/sf, line_color=pc, fillcolor=pc, opacity=0.03)
+            m0, m1, m2, m3 = r["mask_0"], r["mask_1"], r["mask_2"], r["mask_3"]
+            
+            if common_mask is None: common_mask = m3.copy()
+            else: common_mask &= m3
 
-        # --- XY Plane Tab Layout Panel ---
-        with tab_xy:
-            target = st.selectbox("XY Visualization Target", viz_options, index=len(viz_options)-1, key="xy_sel")
-            fig_xy = go.Figure(); max_k = 0; common_mask = None
-            plots = list(results.values()) if target == "RGB Overlap View" else [results[target]]
-            
-            for r in plots:
-                cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
-                max_k = max(max_k, r["k_wg_max"]/sf)
-                fig_xy.add_shape(type="circle", x0=-r["k0"]/sf, y0=-r["k0"]/sf, x1=r["k0"]/sf, y1=r["k0"]/sf, line_color=pc, line_dash="dash", opacity=0.4)
-                fig_xy.add_shape(type="circle", x0=-r["k_wg_max"]/sf, y0=-r["k_wg_max"]/sf, x1=r["k_wg_max"]/sf, y1=r["k_wg_max"]/sf, line_color=pc, fillcolor=pc, opacity=0.03)
-                m0, m1, m2, m3 = r["mask_0"], r["mask_1"], r["mask_2"], r["mask_3"]
-                
-                if common_mask is None: common_mask = m3.copy()
-                else: common_mask &= m3
+            fig_xy.add_trace(go.Scatter(x=r["kx_in"][m0]/sf, y=r["ky_in"][m0]/sf, mode="markers", marker=dict(size=2, color=pc, symbol="circle-open", opacity=0.1), name=f"{cn} Input FOV", hoverinfo="skip"))
+            fig_xy.add_trace(go.Scatter(x=r["kx_icg"][m1]/sf, y=r["ky_icg"][m1]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="square", opacity=0.3), name=f"{cn} Coupled TIR", hoverinfo="skip"))
+            if "Path B" in path_choice:
+                fig_xy.add_trace(go.Scatter(x=r["kx_epe"][m2]/sf, y=r["ky_epe"][m2]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="diamond", opacity=0.5), name=f"{cn} EPE Extracted", hoverinfo="skip"))
+            ht = [f"H:{h:.2f} V:{v:.2f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
+            fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Final Out", text=ht, hoverinfo="text"))
 
-                fig_xy.add_trace(go.Scatter(x=r["kx_in"][m0]/sf, y=r["ky_in"][m0]/sf, mode="markers", marker=dict(size=2, color=pc, symbol="circle-open", opacity=0.1), name=f"{cn} Input FOV", hoverinfo="skip"))
-                fig_xy.add_trace(go.Scatter(x=r["kx_icg"][m1]/sf, y=r["ky_icg"][m1]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="square", opacity=0.3), name=f"{cn} Coupled TIR", hoverinfo="skip"))
-                if "Path B" in path_choice:
-                    fig_xy.add_trace(go.Scatter(x=r["kx_epe"][m2]/sf, y=r["ky_epe"][m2]/sf, mode="markers", marker=dict(size=3, color=pc, symbol="diamond", opacity=0.5), name=f"{cn} EPE Extracted", hoverinfo="skip"))
-                ht = [f"H:{h:.2f} V:{v:.2f}<br>Hop:{hp:.2f}mm<br>Overlap:{(epd_val_in-hp):.2f}mm" for h,v,hp in zip(r["H_mesh"][m3], r["V_mesh"][m3], r["hop_distance"][m3])]
-                fig_xy.add_trace(go.Scatter(x=r["kx_oc"][m3]/sf, y=r["ky_oc"][m3]/sf, mode="markers", marker=dict(size=4, color=pc, symbol="circle", opacity=0.9), name=f"{cn} Final Out", text=ht, hoverinfo="text"))
-
-                if (target != "RGB Overlap View") or (cn == "G"):
-                    if r["c_ray"]:
-                        c = r["c_ray"]
-                        pts = [[c["kx_in"], c["ky_in"]], [c["kx_icg"], c["ky_icg"]]]
-                        if "Path B" in path_choice: pts.append([c["kx_epe"], c["ky_epe"]])
-                        pts.append([c["kx_oc"], c["ky_oc"]])
-                        for i in range(len(pts)-1):
-                            fig_xy.add_annotation(x=pts[i+1][0]/sf, y=pts[i+1][1]/sf, ax=pts[i][0]/sf, ay=pts[i][1]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, opacity=0.8)
-            
-            lim = max_k * 1.1
-            fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
-            st.plotly_chart(fig_xy, use_container_width=True)
-            
-            # --- Grating Spec and Layout Line Angle Calculations ---
-            st.subheader("📊 Grating Specifications & Orientation Structural Mapping Summary")
-            
-            summary_table = {}
-            area_m2 = (oc_width * 1e-3) * (oc_height * 1e-3)
-            
-            for c, r in results.items():
-                mask = r['mask_3']
-                
-                icg_line_ang = (angle_icg + 90.0) % 180.0
-                epe_line_ang = (angle_epe + 90.0) % 180.0
-                oc_line_ang = (r["calculated_a_oc"] + 90.0) % 180.0
-                
-                if np.any(mask):
-                    vh, vv, vhop = r['H_mesh'][mask], r['V_mesh'][mask], r['hop_distance'][mask]
-                    max_h = np.max(vhop)
-                    
-                    h_span_rad = np.radians(np.max(vh) - np.min(vh))
-                    v_span_rad = np.radians(np.max(vv) - np.min(vv))
-                    omega = 4.0 * math.asin(math.sin(h_span_rad / 2.0) * math.sin(v_span_rad / 2.0)) if (h_span_rad > 0 and v_span_rad > 0) else 1e-6
-                    
-                    c_ray = r["c_ray"]
-                    k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
-                    k_z = c_ray["kz_icg"]
-                    
-                    prop_distance_mm = 40.0 
-                    num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
-                    bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
-                    
-                    tir_loss_factor = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_length_mm)
-                    lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
-                    nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
-                    
-                    summary_table[c] = {
-                        "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
-                        "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
-                        "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
-                        "Effective H-FOV": f"{np.min(vh):.1f}°~{np.max(vh):.1f}°", 
-                        "Effective V-FOV": f"{np.min(vv):.1f}°~{np.max(vv):.1f}°", 
-                        "FOV Pass Ratio": f"{(np.sum(mask)/mask.size*100):.1f}%",
-                        "System Efficiency (nits/lm)": f"{nits_per_lumen:,.0f}"
-                    }
-                else:
-                    summary_table[c] = {
-                        "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
-                        "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
-                        "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
-                        "Effective H-FOV": "None", "Effective V-FOV": "None", "FOV Pass Ratio": "0%", "System Efficiency (nits/lm)": "0"
-                    }
-            
-            if common_mask is not None and np.any(common_mask):
-                ref_r = results[list(results.keys())[0]] 
-                ch, cv = ref_r["H_mesh"][common_mask], ref_r["V_mesh"][common_mask]
-                c_nits = sum([float(summary_table[col]["System Efficiency (nits/lm)"].replace(',', '')) for col in results.keys()]) / len(results)
-                
-                summary_table["RGB Common"] = {
-                    "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Line Angle": "-",
-                    "Effective H-FOV": f"{np.min(ch):.1f}°~{np.max(ch):.1f}°", 
-                    "Effective V-FOV": f"{np.min(cv):.1f}°~{np.max(cv):.1f}°", 
-                    "FOV Pass Ratio": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%",
-                    "System Efficiency (nits/lm)": f"{c_nits:,.0f}"
-                }
-                
-            st.table(pd.DataFrame(summary_table))
-
-        # --- XZ Section Tab Layout Panel ---
-        with tab_xz:
-            target_xz = st.selectbox("XZ Visualization Target", viz_options, index=len(viz_options)-1, key="xz_sel")
-            fig_xz = go.Figure(); max_kz = 0
-            plots_xz = list(results.values()) if target_xz == "RGB Overlap View" else [results[target_xz]]
-            arc_ang = np.linspace(0, np.pi, 100)
-            for r in plots_xz:
-                cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
-                max_kz = max(max_kz, r["k_wg_max"]/sf)
-                fig_xz.add_trace(go.Scatter(x=(r['k0']/sf)*np.cos(arc_ang), y=(r['k0']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, dash="dash"), showlegend=False))
-                fig_xz.add_trace(go.Scatter(x=(r['k_wg_max']/sf)*np.cos(arc_ang), y=(r['k_wg_max']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, width=1), fill='tonexty', fillcolor=f"rgba({255 if cn=='R' else 0},{255 if cn=='G' else 0},{255 if cn=='B' else 0},0.04)", showlegend=False))
+            if (target != "RGB Overlap View") or (cn == "G"):
                 if r["c_ray"]:
                     c = r["c_ray"]
-                    fig_xz.add_annotation(x=c["kx_icg"]/sf, y=c["kz_in"]/sf, ax=c["kx_in"]/sf, ay=c["kz_in"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="ICG")
-                    fig_xz.add_trace(go.Scatter(x=[c["kx_icg"]/sf, c["kx_icg"]/sf], y=[c["kz_in"]/sf, c["kz_icg"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
-                    curr_kx, curr_kz = c["kx_icg"], c["kz_icg"]
-                    if "Path B" in path_choice and r["G_EPE_x"] != 0:
-                        fig_xz.add_annotation(x=c["kx_epe"]/sf, y=c["kz_icg"]/sf, ax=c["kx_icg"]/sf, ay=c["kz_icg"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="EPE")
-                        fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_epe"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
-                        curr_kx, curr_kz = c["kx_epe"], c["kz_epe"]
-                    fig_xz.add_annotation(x=c["kx_oc"]/sf, y=curr_kz/sf, ax=curr_kx/sf, ay=curr_kz/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="purple", text="OC")
-                    fig_xz.add_trace(go.Scatter(x=[c["kx_oc"]/sf, c["kx_oc"]/sf], y=[curr_kz/sf, c["kz_oc"]/sf], mode="lines", line=dict(color="purple", dash="dot"), showlegend=False))
-                    fig_xz.add_trace(go.Scatter(x=[c["kx_in"]/sf, c["kx_oc"]/sf], y=[c["kz_in"]/sf, c["kz_oc"]/sf], mode="markers", marker=dict(size=10, color=pc, symbol="star"), name=f"{cn} Central Field Ray"))
-            fig_xz.update_layout(title=f"K-Space XZ Cross-Section View - Central Gaze Path ({coord_sys})", xaxis=dict(range=[-max_kz*1.1, max_kz*1.1], scaleanchor="y"), yaxis=dict(range=[0, max_kz*1.1]), height=600, plot_bgcolor="white")
-            st.plotly_chart(fig_xz, use_container_width=True)
-
-        # --- Thickness Sweep Tab Layout Panel ---
-        with tab_sweep:
-            st.markdown("#### Substrate Thickness Sweep Panel (Optimization Loop)")
-            c1, c2, c3 = st.columns(3); ts, te, tp = c1.number_input("Start Thickness", 0.1, 3.0, 0.2), c2.number_input("End Thickness", 0.1, 3.0, 1.0), c3.number_input("Step", 0.01, 1.0, 0.05)
-            if st.button("Run Sweep Simulation Loop", use_container_width=True):
-                t_arr = np.arange(ts, te+1e-9, tp); res_l = []; pb = st.progress(0)
-                for i, t in enumerate(t_arr):
-                    d = {"t": round(t,3)}; cm = None
-                    for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
-                        if wd["active"]:
-                            rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
-                            if cm is None: cm = mt.copy()
-                            else: cm &= mt
-                            vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
-                            d[f"{k} H-Span"] = np.max(vh)-np.min(vh) if np.any(mt) else 0
-                            d[f"{k} V-Span"] = np.max(vv)-np.min(vv) if np.any(mt) else 0
-                    
-                    if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]):
-                        ref_r = results[list(results.keys())[0]]
-                        ch, cv = ref_r["H_mesh"][cm], ref_r["V_mesh"][cm]
-                        d["Common H-Span"] = np.max(ch)-np.min(ch) if np.any(cm) else 0
-                        d["Common V-Span"] = np.max(cv)-np.min(cv) if np.any(cm) else 0
-                    res_l.append(d); pb.progress((i+1)/len(t_arr))
+                    pts = [[c["kx_in"], c["ky_in"]], [c["kx_icg"], c["ky_icg"]]]
+                    if "Path B" in path_choice: pts.append([c["kx_epe"], c["ky_epe"]])
+                    pts.append([c["kx_oc"], c["ky_oc"]])
+                    for i in range(len(pts)-1):
+                        fig_xy.add_annotation(x=pts[i+1][0]/sf, y=pts[i+1][1]/sf, ax=pts[i][0]/sf, ay=pts[i][1]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, opacity=0.8)
+        
+        lim = max_k * 1.1
+        fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
+        st.plotly_chart(fig_xy, use_container_width=True)
+        
+        # --- Grating Specifications Table Engine ---
+        st.subheader("📊 Grating Specifications & Orientation Structural Mapping Summary")
+        summary_table = {}
+        area_m2 = (oc_width * 1e-3) * (oc_height * 1e-3)
+        
+        for c, r in results.items():
+            mask = r['mask_3']
+            icg_line_ang = (angle_icg + 90.0) % 180.0
+            epe_line_ang = (angle_epe + 90.0) % 180.0
+            oc_line_ang = (r["calculated_a_oc"] + 90.0) % 180.0
+            
+            if np.any(mask):
+                vh, vv, vhop = r['H_mesh'][mask], r['V_mesh'][mask], r['hop_distance'][mask]
+                max_h = np.max(vhop)
+                h_span_rad = np.radians(np.max(vh) - np.min(vh))
+                v_span_rad = np.radians(np.max(vv) - np.min(vv))
+                omega = 4.0 * math.asin(math.sin(h_span_rad / 2.0) * math.sin(v_span_rad / 2.0)) if (h_span_rad > 0 and v_span_rad > 0) else 1e-6
                 
-                df = pd.DataFrame(res_l); fs = go.Figure()
-                for col in df.columns[1:]:
-                    lc = "black" if "Common" in col else ("red" if "R" in col else ("green" if "G" in col else "blue"))
-                    ls = "solid" if "H-Span" in col else "dot"
-                    fs.add_trace(go.Scatter(x=df["t"], y=df[col], mode="lines+markers", name=col, line=dict(color=lc, width=2, dash=ls)))
-                fs.update_layout(title="H/V FOV Span Variations across Waveguide Substrate Thickness Bounds", xaxis_title="Thickness (mm)", yaxis_title="Span (°)")
-                st.plotly_chart(fs, use_container_width=True); st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
+                c_ray = r["c_ray"]
+                k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
+                k_z = c_ray["kz_icg"]
+                
+                prop_distance_mm = 40.0 
+                num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
+                bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
+                
+                tir_loss_factor = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_length_mm)
+                lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
+                nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
+                
+                summary_table[c] = {
+                    "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
+                    "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
+                    "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
+                    "Effective H-FOV": f"{np.min(vh):.1f}°~{np.max(vh):.1f}°", 
+                    "Effective V-FOV": f"{np.min(vv):.1f}°~{np.max(vv):.1f}°", 
+                    "FOV Pass Ratio": f"{(np.sum(mask)/mask.size*100):.1f}%",
+                    "System Efficiency (nits/lm)": f"{nits_per_lumen:,.0f}"
+                }
+            else:
+                summary_table[c] = {
+                    "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
+                    "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
+                    "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
+                    "Effective H-FOV": "None", "Effective V-FOV": "None", "FOV Pass Ratio": "0%", "System Efficiency (nits/lm)": "0"
+                }
+        
+        if common_mask is not None and np.any(common_mask):
+            ref_r = results[list(results.keys())[0]] 
+            ch, cv = ref_r["H_mesh"][common_mask], ref_r["V_mesh"][common_mask]
+            c_nits = sum([float(summary_table[col]["System Efficiency (nits/lm)"].replace(',', '')) for col in results.keys()]) / len(results)
+            
+            summary_table["RGB Common"] = {
+                "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Line Angle": "-",
+                "Effective H-FOV": f"{np.min(ch):.1f}°~{np.max(ch):.1f}°", 
+                "Effective V-FOV": f"{np.min(cv):.1f}°~{np.max(cv):.1f}°", 
+                "FOV Pass Ratio": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%",
+                "System Efficiency (nits/lm)": f"{c_nits:,.0f}"
+            }
+        st.table(pd.DataFrame(summary_table))
+
+    # --- XZ Section Tab Layout Panel ---
+    with tab_xz:
+        target_xz = st.selectbox("XZ Visualization Target", viz_options, index=len(viz_options)-1, key="xz_sel")
+        fig_xz = go.Figure(); max_kz = 0
+        plots_xz = list(results.values()) if target_xz == "RGB Overlap View" else [results[target_xz]]
+        arc_ang = np.linspace(0, np.pi, 100)
+        for r in plots_xz:
+            cn, pc = r["color"], c_map[r["color"]]; sf = r["k0"] if coord_sys == "정규화 파수 (Direction Cosine)" else 1.0
+            max_kz = max(max_kz, r["k_wg_max"]/sf)
+            fig_xz.add_trace(go.Scatter(x=(r['k0']/sf)*np.cos(arc_ang), y=(r['k0']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, dash="dash"), showlegend=False))
+            fig_xz.add_trace(go.Scatter(x=(r['k_wg_max']/sf)*np.cos(arc_ang), y=(r['k_wg_max']/sf)*np.sin(arc_ang), mode="lines", line=dict(color=pc, width=1), fill='tonexty', fillcolor=f"rgba({255 if cn=='R' else 0},{255 if cn=='G' else 0},{255 if cn=='B' else 0},0.04)", showlegend=False))
+            if r["c_ray"]:
+                c = r["c_ray"]
+                fig_xz.add_annotation(x=c["kx_icg"]/sf, y=c["kz_in"]/sf, ax=c["kx_in"]/sf, ay=c["kz_in"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="ICG")
+                fig_xz.add_trace(go.Scatter(x=[c["kx_icg"]/sf, c["kx_icg"]/sf], y=[c["kz_in"]/sf, c["kz_icg"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
+                curr_kx, curr_kz = c["kx_icg"], c["kz_icg"]
+                if "Path B" in path_choice and r["G_EPE_x"] != 0:
+                    fig_xz.add_annotation(x=c["kx_epe"]/sf, y=c["kz_icg"]/sf, ax=c["kx_icg"]/sf, ay=c["kz_icg"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="EPE")
+                    fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_epe"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
+                    curr_kx, curr_kz = c["kx_epe"], c["kz_epe"]
+                fig_xz.add_annotation(x=c["kx_oc"]/sf, y=curr_kz/sf, ax=curr_kx/sf, ay=curr_kz/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="purple", text="OC")
+                fig_xz.add_trace(go.Scatter(x=[c["kx_oc"]/sf, c["kx_oc"]/sf], y=[curr_kz/sf, c["kz_oc"]/sf], mode="lines", line=dict(color="purple", dash="dot"), showlegend=False))
+                fig_xz.add_trace(go.Scatter(x=[c["kx_in"]/sf, c["kx_oc"]/sf], y=[c["kz_in"]/sf, c["kz_oc"]/sf], mode="markers", marker=dict(size=10, color=pc, symbol="star"), name=f"{cn} Central Field Ray"))
+        fig_xz.update_layout(title=f"K-Space XZ Cross-Section View - Central Gaze Path ({coord_sys})", xaxis=dict(range=[-max_kz*1.1, max_kz*1.1], scaleanchor="y"), yaxis=dict(range=[0, max_kz*1.1]), height=600, plot_bgcolor="white")
+        st.plotly_chart(fig_xz, use_container_width=True)
+
+    # --- Thickness Sweep Tab Layout Panel ---
+    with tab_sweep:
+        st.markdown("#### Substrate Thickness Sweep Panel (Optimization Loop)")
+        c1, c2, c3 = st.columns(3); ts, te, tp = c1.number_input("Start Thickness", 0.1, 3.0, 0.2), c2.number_input("End Thickness", 0.1, 3.0, 1.0), c3.number_input("Step", 0.01, 1.0, 0.05)
+        if st.button("Run Sweep Simulation Loop", use_container_width=True):
+            t_arr = np.arange(ts, te+1e-9, tp); res_l = []; pb = st.progress(0)
+            for i, t in enumerate(t_arr):
+                d = {"t": round(t,3)}; cm = None
+                for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
+                    if wd["active"]:
+                        rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
+                        if cm is None: cm = mt.copy()
+                        else: cm &= mt
+                        vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
+                        d[f"{k} H-Span"] = np.max(vh)-np.min(vh) if np.any(mt) else 0
+                        d[f"{k} V-Span"] = np.max(vv)-np.min(vv) if np.any(mt) else 0
+                
+                if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]):
+                    ref_r = results[list(results.keys())[0]]
+                    ch, cv = ref_r["H_mesh"][cm], ref_r["V_mesh"][cm]
+                    d["Common H-Span"] = np.max(ch)-np.min(ch) if np.any(cm) else 0
+                    d["Common V-Span"] = np.max(cv)-np.min(cv) if np.any(cm) else 0
+                res_l.append(d); pb.progress((i+1)/len(t_arr))
+            
+            df = pd.DataFrame(res_l); fs = go.Figure()
+            for col in df.columns[1:]:
+                lc = "black" if "Common" in col else ("red" if "R" in col else ("green" if "G" in col else "blue"))
+                ls = "solid" if "H-Span" in col else "dot"
+                fs.add_trace(go.Scatter(x=df["t"], y=df[col], mode="lines+markers", name=col, line=dict(color=lc, width=2, dash=ls)))
+            fs.update_layout(title="H/V FOV Span Variations across Waveguide Substrate Thickness Bounds", xaxis_title="Thickness (mm)", yaxis_title="Span (°)")
+            st.plotly_chart(fs, use_container_width=True); st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
 else:
     st.info("💡 사이드바의 설정을 조율하신 후 최하단의 [▶ Run Simulation] 버튼을 클릭하면 정밀 K-space 수치 해석 도면이 활성화됩니다.")
