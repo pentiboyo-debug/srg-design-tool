@@ -98,14 +98,14 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [Requirement 1 & 3 Integration] Central field ray tracking including Light Engine oblique tilt offsets
+    # Central field ray tracking including Light Engine oblique tilt offsets
     k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
     k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
-    # [Requirement 3] Auto-match condition: Target OC G-vector forces central field ray back to normal vector (0,0)
+    # Auto-match condition: Target OC G-vector forces central field ray back to normal vector (0,0)
     if auto_oc_flag:
         G_OC_x = -k_x_center_epe
         G_OC_y = -k_y_center_epe
@@ -121,7 +121,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     # Mesh Grid Generation over FOV boundaries
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
     
-    # [Requirement 1] Light Engine Oblique Input Incident Angle Offset Addition
     kx_in = k0 * np.sin(H_mesh + math.radians(le_tilt_x))
     ky_in = k0 * np.sin(V_mesh + math.radians(le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
@@ -189,10 +188,23 @@ st.sidebar.markdown("**🔮 Grating Vector Rotation Alignment**")
 angle_icg = dual_input("ICG Vector Angle (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f", sidebar=True)
 angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
 
+# Initialize global auto tracking specs inside cache session to print out on sidebar dynamically
+if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
+if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
+
 auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle (Zero-tilt Target)", value=False, key="auto_oc_angle")
 if auto_oc_angle:
-    st.sidebar.caption("🔒 OC Angle is locked in optimized closed-loop auto tracking mode.")
-    angle_oc = 120.0 
+    angle_oc = st.session_state["auto_oc_vector_ang"]
+    auto_oc_line_ang = (angle_oc + 90.0) % 180.0
+    # [New Feature] Render auto-calculated optimized specifications block in red warning box on sidebar panel
+    st.sidebar.markdown(f"""
+    <div style="background-color:rgba(255, 75, 75, 0.08); border:1px solid #ff4b4b; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
+        <div style="font-size:11px; color:#ff4b4b; font-weight:bold;">🔒 OC Auto-Find Spec (Locked)</div>
+        <div style="font-size:12px; font-weight:600; margin-top:3px;">• Target Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
+        <div style="font-size:12px; font-weight:600;">• Vector Angle: {angle_oc:.2f}°</div>
+        <div style="font-size:12px; font-weight:600;">• Line Angle: {auto_oc_line_ang:.2f}°</div>
+    </div>
+    """, unsafe_allow_html=True)
 else:
     angle_oc = dual_input("OC Vector Angle (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f", sidebar=True)
 
@@ -210,7 +222,7 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             epe_p = dual_input("Λ_EPE Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_epe", "%.2f", sidebar=True) if "Path B" in path_choice else None
             
             if auto_oc_angle:
-                oc_p = 300.0 
+                oc_p = st.session_state["auto_oc_pitch_val"]
             else:
                 oc_p = dual_input("Λ_OC Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_oc", "%.2f", sidebar=True)
             
@@ -219,7 +231,7 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             eff_epe = dual_input("EPE Efficiency", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00
             eff_oc = dual_input("OC Efficiency", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
-            return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": def_p if auto_oc_angle else oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
+            return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
 
 wl_R = get_wl_inputs("R", 638.0, 300.0, n_d_in, abbe_v_in)
@@ -227,14 +239,12 @@ wl_G = get_wl_inputs("G", 520.0, 300.0, n_d_in, abbe_v_in)
 wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
 
 st.sidebar.markdown("---")
-# [수정] 기존 GUI 레이아웃 순서를 완벽히 유지하기 위해 사이드바 하단에 독립형 제어 실행 버튼 배치
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
 
-# --- 6. Execute Multi-Channel Mathematical Computations (Session-buffered Engine) ---
+# --- 6. Execute Multi-Channel Mathematical Computations ---
 if "srg_cached_results" not in st.session_state:
     st.session_state["srg_cached_results"] = None
 
-# 실행 버튼을 누르거나 이미 연산 버퍼 메모리가 존재할 때만 메인 도면 트리거
 if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
     if run_simulation_trigger:
         results = {}
@@ -245,6 +255,9 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
                 if auto_oc_angle:
                     data["Lambda_OC"] = res["Lambda_OC"]
                     angle_oc = res["calculated_a_oc"]
+                    # Update session state cache to print specs on sidebar immediately upon next click trigger
+                    st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
+                    st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
         st.session_state["srg_cached_results"] = results
     else:
         results = st.session_state["srg_cached_results"]
@@ -296,7 +309,7 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
             fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1), yaxis=dict(range=[-lim, lim]), width=800, height=800, plot_bgcolor="white")
             st.plotly_chart(fig_xy, use_container_width=True)
             
-            # --- [Requirement 2 & 3 Integration] Grating Vector Spec and Layout Line Angle Calculations ---
+            # --- Grating Spec and Layout Line Angle Calculations ---
             st.subheader("📊 Grating Specifications & Orientation Structural Mapping Summary")
             
             summary_table = {}
@@ -305,7 +318,6 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
             for c, r in results.items():
                 mask = r['mask_3']
                 
-                # [Requirement 2] Conversion logic from Grating K-vector angle to physical space Grating Line orientation angle (XY system)
                 icg_line_ang = (angle_icg + 90.0) % 180.0
                 epe_line_ang = (angle_epe + 90.0) % 180.0
                 oc_line_ang = (r["calculated_a_oc"] + 90.0) % 180.0
