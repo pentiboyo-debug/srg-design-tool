@@ -99,18 +99,20 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [단위 수정 완료] 각도 스케일 꼬임 제거를 위해 sin 내부 단위를 물리 법칙에 맞춰 동형화 완료
-    k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
-    k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
+    # [부호 튜닝 완전 판정] 지면 방향(- 입력 시) 입사 파수가 정확하게 음수 영역(-Y)을 갖도록 대치
+    k_x_center_in = k0 * math.sin(math.radians(le_tilt_x))
+    k_y_center_in = k0 * math.sin(math.radians(le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
     if auto_oc_flag:
         if oc_find_mode == "Specular Target":
-            k_x_target = -k_x_center_in
-            k_y_target = -k_y_center_in
+            # 거울반사 조건: 입사된 파수의 방향 성분이 탈출단에서도 동일하게 승산됨 (k_out = k_in)
+            k_x_target = k_x_center_in
+            k_y_target = k_y_center_in
         else:
+            # Custom 지정 조건: 사용자가 명시한 커스텀 탈출 화각 파수 바인딩
             k_x_target = k0 * math.sin(math.radians(custom_out_x))
             k_y_target = k0 * math.sin(math.radians(custom_out_y))
             
@@ -125,9 +127,9 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    # 메쉬 각도 생성 단계와 sin 가산 단계를 분리하여 라디안 중복 왜곡 에러 원천 차단
     H_deg, V_deg = np.meshgrid(np.arange(h_min, h_max + 0.1, 0.5), np.arange(v_min, v_max + 0.1, 0.5))
     
+    # 메쉬 입사 전체 영역 틸트 성분 대칭 변환 일치화 완료
     kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
     ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
@@ -290,10 +292,8 @@ if results is not None:
         
         for r in plots:
             cn, pc = r["color"], c_map[r["color"]]
-            # 정규화 모드일 때 스케일 인자 설정 (k0로 나누면 정확히 Direction Cosine 스케일로 정규화)
             sf = r["k0"] if coord_sys == "Normalized Wavevector (Direction Cosine)" else 1.0
             
-            # 기하 가이드 링 드로잉 (Air Circle=1.0, Substrate TIR Circle=굴절률)
             fig_xy.add_shape(type="circle", x0=-r["k0"]/sf, y0=-r["k0"]/sf, x1=r["k0"]/sf, y1=r["k0"]/sf, line_color=pc, line_dash="dash", opacity=0.4)
             fig_xy.add_shape(type="circle", x0=-r["k_wg_max"]/sf, y0=-r["k_wg_max"]/sf, x1=r["k_wg_max"]/sf, y1=r["k_wg_max"]/sf, line_color=pc, fillcolor=pc, opacity=0.03)
             m0, m1, m2, m3 = r["mask_0"], r["mask_1"], r["mask_2"], r["mask_3"]
@@ -317,7 +317,6 @@ if results is not None:
                     for i in range(len(pts)-1):
                         fig_xy.add_annotation(x=pts[i+1][0]/sf, y=pts[i+1][1]/sf, ax=pts[i][0]/sf, ay=pts[i][1]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, opacity=0.8)
         
-        # [스케일 패치] 정규화 모드 시 스케일을 굴절률 n 마진에 맞춰 [-2.0, 2.0] 대칭 공간으로 딱 고정함
         lim = 2.0 if coord_sys == "Normalized Wavevector (Direction Cosine)" else 0.025
         fig_xy.update_layout(xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1, title=f"Kx ({coord_sys})"), yaxis=dict(range=[-lim, lim], title=f"Ky ({coord_sys})"), width=800, height=800, plot_bgcolor="white")
         st.plotly_chart(fig_xy, use_container_width=True)
