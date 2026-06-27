@@ -31,7 +31,8 @@ def export_settings():
         "coord_sys": st.session_state.get("coord_sys"),
         "single_layer_sync": st.session_state.get("single_layer_sync"),
         "m_order_select": st.session_state.get("m_order_select", 1),
-        "auto_oc_angle": st.session_state.get("auto_oc_angle", False)
+        "auto_oc_angle": st.session_state.get("auto_oc_angle", False),
+        "oc_find_mode": st.session_state.get("oc_find_mode", "Specular Target")
     })
     return json.dumps(settings, indent=4)
 
@@ -86,7 +87,7 @@ def get_refractive_index(lam, n_d, V_d):
     B = (n_d - 1) / V_d * (486.1**2 * 656.3**2) / (486.1**2 - 656.3**2) * 1e-6
     return (n_d - B / (589.3/1000)**2) + B / (lam/1000)**2
 
-def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag):
+def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag, oc_find_mode, custom_out_x, custom_out_y):
     if not wl_dict["active"]: return None
     lam = wl_dict["lambda"]; n_lam = get_refractive_index(lam, n_d, V_d); k0 = 2 * math.pi / lam; k_wg_max = n_lam * k0
     
@@ -98,20 +99,26 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # Central field ray input 파수 연산 (Light Engine 틸트 반영)
-    k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
-    k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
+    # [직관적 부호 보정 적용] 안경 착용 지면 숙임(-값)이 K-space 아래(-Y)에 정확히 매칭되도록 오프셋 감산 처리
+    k_x_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_x))
+    k_y_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
     
-    # [수정] 0도 수직 출광이 아닌 입사 사입사각 대비 완벽 대칭 구조인 '거울반사 출광 스펙'으로 자동 추적 엔진 개정
+    # [Auto-find 분기 업그레이드] 거울반사 대칭 스펙 vs 사용자 지정 탈출 화각 추적 매칭
     if auto_oc_flag:
-        k_x_specular_target = -k_x_center_in
-        k_y_specular_target = -k_y_center_in
-        
-        G_OC_x = k_x_specular_target - k_x_center_epe
-        G_OC_y = k_y_specular_target - k_y_center_epe
+        if oc_find_mode == "Specular Target":
+            # 거울반사 조건: 입사 파수 성분 벡터를 반전 투영
+            k_x_target = -k_x_center_in
+            k_y_target = -k_y_center_in
+        else:
+            # Custom 각도 조건: 사용자가 임의로 지정한 중심 탈출 화각 파수 매칭
+            k_x_target = k0 * math.sin(math.radians(custom_out_x))
+            k_y_target = k0 * math.sin(math.radians(custom_out_y))
+            
+        G_OC_x = k_x_target - k_x_center_epe
+        G_OC_y = k_y_target - k_y_center_epe
         G_OC_mag = math.sqrt(G_OC_x**2 + G_OC_y**2)
         if G_OC_mag > 0:
             wl_dict["Lambda_OC"] = (2 * math.pi) / G_OC_mag
@@ -121,14 +128,13 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    # Mesh Grid Generation over FOV boundaries
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
     
-    kx_in = k0 * np.sin(H_mesh + math.radians(le_tilt_x))
-    ky_in = k0 * np.sin(V_mesh + math.radians(le_tilt_y))
+    # 전체 메쉬 그리드 스코프 부호 역산 정형화 완료
+    kx_in = k0 * np.sin(H_mesh - math.radians(le_tilt_x))
+    ky_in = k0 * np.sin(V_mesh - math.radians(le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
-    # Waveguide Layer Momentum Transfers (K-space Shifts)
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
     tir_mask_icg = ((kx_icg**2 + ky_icg**2) > k0**2) & ((kx_icg**2 + ky_icg**2) < k_wg_max**2)
     
@@ -168,8 +174,9 @@ coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**⚙️ Light Engine Alignment Tilt Panel**")
+# [부호 패치 완료] 엔지니어 사양에 맞춰 마이너스(-) 입력 시 지면(아래)을 지향하도록 가이드 표기 수정
 le_tilt_x = dual_input("LE Horizontal Incident Angle θ_x (°)", -30.0, 30.0, 0.0, 0.1, "le_tilt_x", "%.1f", sidebar=True)
-le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (°)", -30.0, 30.0, 0.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
+le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Ground, +:Sky)", -30.0, 30.0, 0.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Hardware Glass Properties**")
@@ -194,15 +201,30 @@ angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 240.0, 0.01, "angle_
 if "auto_oc_pitch_val" not in st.session_state: st.session_state["auto_oc_pitch_val"] = 300.0
 if "auto_oc_vector_ang" not in st.session_state: st.session_state["auto_oc_vector_ang"] = 120.0
 
-# [수정] 효율 손실을 방지하는 거울반사 대칭 출광 기반 자동 추적 라벨명 업그레이드
-auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle (Specular Target)", value=False, key="auto_oc_angle")
+auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle Mode", value=False, key="auto_oc_angle")
+
+# 초기 분기 제어용 변수 선언
+oc_find_mode = "Specular Target"
+custom_out_x = 0.0
+custom_out_y = 0.0
+
 if auto_oc_angle:
+    # [New Feature] 거울반사(효율 우선) vs 커스텀 출광각(정렬 우선) 다이내믹 펑션 패널
+    oc_find_mode = st.sidebar.radio("OC Auto-Find Target Condition", ["Specular Target", "Custom Output Angle"], index=0, key="oc_find_mode")
+    
+    if oc_find_mode == "Custom Output Angle":
+        st.sidebar.markdown("*🎯 Target Out-Coupling Angle Setup*")
+        custom_out_x = dual_input("Target Horizontal Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_x", "%.1f", sidebar=True)
+        custom_out_y = dual_input("Target Vertical Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_y", "%.1f", sidebar=True)
+        
     angle_oc = st.session_state["auto_oc_vector_ang"]
     auto_oc_line_ang = (angle_oc + 90.0) % 180.0
+    
+    theme_color = "#4b96ff" if oc_find_mode == "Specular Target" else "#ff964b"
     st.sidebar.markdown(f"""
-    <div style="background-color:rgba(75, 150, 255, 0.08); border:1px solid #4b96ff; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
-        <div style="font-size:11px; color:#4b96ff; font-weight:bold;">🔒 OC Specular Auto-Find (Locked)</div>
-        <div style="font-size:12px; font-weight:600; margin-top:3px;">• Target Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
+    <div style="background-color:rgba(75, 150, 255, 0.08); border:1px solid {theme_color}; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:5px;">
+        <div style="font-size:11px; color:{theme_color}; font-weight:bold;">🔒 OC Auto-Tracking Active ({oc_find_mode})</div>
+        <div style="font-size:12px; font-weight:600; margin-top:3px;">• Calculated Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
         <div style="font-size:12px; font-weight:600;">• Vector Angle: {angle_oc:.2f}°</div>
         <div style="font-size:12px; font-weight:600;">• Line Angle: {auto_oc_line_ang:.2f}°</div>
     </div>
@@ -251,7 +273,7 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
     if run_simulation_trigger:
         results = {}
         for data in [wl_R, wl_G, wl_B]:
-            res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle)
+            res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
             if res: 
                 results[data["color"]] = res
                 if auto_oc_angle:
@@ -411,7 +433,7 @@ if run_simulation_trigger or st.session_state["srg_cached_results"] is not None:
                     d = {"t": round(t,3)}; cm = None
                     for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
                         if wd["active"]:
-                            rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle); mt = rt["mask_3"]
+                            rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
                             if cm is None: cm = mt.copy()
                             else: cm &= mt
                             vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
