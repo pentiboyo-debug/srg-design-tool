@@ -99,9 +99,9 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # 부호 보정 적용 (지면 방향 = 음수 매칭 완료)
-    k_x_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_x))
-    k_y_center_in = k0 * math.sin(math.radians(0.0 - le_tilt_y))
+    # [부호 완전 교정 블록] +입력 시 +Y로 직관적으로 정렬 이동하도록 감산(-)을 가산(+)으로 변경 완료
+    k_x_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_x))
+    k_y_center_in = k0 * math.sin(math.radians(0.0 + le_tilt_y))
     
     k_x_center_epe = k_x_center_in + G_ICG_x + G_EPE_x
     k_y_center_epe = k_y_center_in + G_ICG_y + G_EPE_y
@@ -127,8 +127,9 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
         
     H_mesh, V_mesh = np.meshgrid(np.radians(np.arange(h_min, h_max + 0.1, 0.5)), np.radians(np.arange(v_min, v_max + 0.1, 0.5)))
     
-    kx_in = k0 * np.sin(H_mesh - math.radians(le_tilt_x))
-    ky_in = k0 * np.sin(V_mesh - math.radians(le_tilt_y))
+    # 메쉬 그리드 필드 전체 영역의 틸트 부호 매칭 정형화 완료
+    kx_in = k0 * np.sin(H_mesh + math.radians(le_tilt_x))
+    ky_in = k0 * np.sin(V_mesh + math.radians(le_tilt_y))
     kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
