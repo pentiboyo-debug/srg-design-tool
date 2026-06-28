@@ -98,13 +98,11 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # [수정 블록] 반사형(후면 가공) 모드 선택 시 스넬의 법칙에 의한 기판 내부 굴절압축 물리 구현
+    # 반사형(후면 가공) 모드 선택 시 스넬의 법칙에 의한 기판 내부 굴절압축 물리 구현
     if grating_face_mode == "Reflection (Back Face)":
-        # 기판 내부에서의 굴절 각도 유도 적용 (Snell's Law: sin_theta_glass = sin_theta_air / n)
         k_x_center_in = k0 * (math.sin(math.radians(le_tilt_x)) / n_lam)
         k_y_center_in = k0 * (math.sin(math.radians(le_tilt_y)) / n_lam)
     else:
-        # 투과형(전면 가공) 모드: 공기 중 입사 파수 벡터 그대로 진입
         k_x_center_in = k0 * math.sin(math.radians(le_tilt_x))
         k_y_center_in = k0 * math.sin(math.radians(le_tilt_y))
     
@@ -116,7 +114,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
             k_x_target = k_x_center_in
             k_y_target = k_y_center_in
         else:
-            # Custom 각도 타깃 지정 조건식 동기화
             if grating_face_mode == "Reflection (Back Face)":
                 k_x_target = k0 * (math.sin(math.radians(custom_out_x)) / n_lam)
                 k_y_target = k0 * (math.sin(math.radians(custom_out_y)) / n_lam)
@@ -135,7 +132,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    # FOV 전체 메쉬리드 맵에도 투과형/반사형 물리 법칙 일괄 투영
     H_deg, V_deg = np.meshgrid(np.arange(h_min, h_max + 0.1, 0.5), np.arange(v_min, v_max + 0.1, 0.5))
     
     if grating_face_mode == "Reflection (Back Face)":
@@ -187,7 +183,7 @@ with col_s2:
 st.sidebar.markdown("---")
 path_choice = st.sidebar.radio("Grating Path Type", ["Path A (ICG→OC)", "Path B (ICG→EPE→OC)"], index=1, horizontal=True, key="path_choice")
 
-# [신규 기능 추가] 투과형(전면) vs 반사형(후면) 그레이팅 물리 선택 엔진 UI 옵션 바인딩 완료
+# 그레이팅 수치 제어 스위치 모드
 grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=0, key="grating_face_mode")
 
 single_layer_sync = st.sidebar.checkbox("Single Layer Mode (RGB Sync)", value=True, key="single_layer_sync")
@@ -202,6 +198,25 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Hardware Glass Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
+
+# [신규 기능 개발 블록] Back Face 선택 시 스넬의 법칙에 의해 굴절 압축된 기판 내부의 유효 입사 0필드 각도 실시간 표기 모듈
+if grating_face_mode == "Reflection (Back Face)":
+    # 기준 녹색 파장(Green, 520nm) 기준의 매질 굴절률 매핑 추출
+    n_green = get_refractive_index(520.0, n_d_in, abbe_v_in)
+    
+    # Snell's Law 역산 수식 정의 (theta_glass = arcsin(sin(theta_air)/n))
+    glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_green)) if abs(np.sin(np.radians(le_tilt_x)) / n_green) <= 1.0 else 0.0
+    glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_green)) if abs(np.sin(np.radians(le_tilt_y)) / n_green) <= 1.0 else 0.0
+    
+    st.sidebar.markdown(f"""
+    <div style="background-color:rgba(16, 185, 129, 0.08); border:1px solid #10b981; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:10px;">
+        <div style="font-size:11px; color:#10b981; font-weight:bold;">🔍 Snell's Law Back Face Refraction View</div>
+        <div style="font-size:11.5px; margin-top:3px; font-weight:500; color:#333;">• Green Refractive Index (n_G): <b>{n_green:.3f}</b></div>
+        <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle X: <span style="color:#10b981; font-weight:700;">{glass_tilt_x:.2f}°</span> (Air: {le_tilt_x:.1f}°)</div>
+        <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle Y: <span style="color:#10b981; font-weight:700;">{glass_tilt_y:.2f}°</span> (Air: {le_tilt_y:.1f}°)</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 thickness_in = dual_input("Substrate Thickness t (mm)", 0.1, 3.0, 0.40, 0.01, "thickness", "%.2f") 
 epd_val_in = dual_input("Light Engine EPD Size (mm)", 1.0, 50.0, 3.5, 0.1, "epd_val", "%.1f") 
 h_fov = dual_range_input("Horizontal FOV Bounds (°)", -60, 60, (-30, 30), 0.01, "h_fov")
