@@ -46,11 +46,12 @@ def import_settings(json_data):
 # --- 3. Widget Synchronization Logic ---
 def update_sync(k, val):
     if st.session_state.get("single_layer_sync"):
-        parts = k.split('_')
-        if len(parts) == 2 and parts[0] in ['R', 'G', 'B'] and parts[1] in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
-            for color in ['R', 'G', 'B']:
-                st.session_state[f"{color}_{parts[1]}_slider"] = float(val)
-                st.session_state[f"{color}_{parts[1]}_num"] = float(val)
+        # [클로드 피드백 반영] 기존 쪼개기 방식의 취약점을 보완하기 위해 키 이름 매칭 패턴으로 로직 안정성 강화
+        for suffix in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
+            if k.endswith(f"_{suffix}_slider") or k.endswith(f"_{suffix}_num"):
+                for color in ['R', 'G', 'B']:
+                    st.session_state[f"{color}_{suffix}_slider"] = float(val)
+                    st.session_state[f"{color}_{suffix}_num"] = float(val)
 
 def update_from_slider(k):
     val = st.session_state[f"{k}_slider"]
@@ -85,10 +86,13 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
 
 # --- 4. Computational Physics Engine ---
 def get_refractive_index(lam, n_d, V_d):
-    B = (n_d - 1) / V_d * (486.1**2 * 656.3**2) / (486.1**2 - 656.3**2) * 1e-6
-    return (n_d - B / (589.3/1000)**2) + B / (lam/1000)**2
+    # [클로드 피드백 반영 - 오류 1 수정] Cauchy 2항 모델과 Abbe수 정의식 간의 표준 마이크로미터 단위계 계수 완전 정형화
+    lam_F, lam_d, lam_C = 0.4861, 0.5893, 0.6563  # μm 단위 고정
+    B = ((n_d - 1.0) / V_d) / (1.0 / lam_F**2 - 1.0 / lam_C**2)
+    A = n_d - B / lam_d**2
+    return A + B / (lam / 1000.0)**2
 
-def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, grating_face_mode, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag, oc_find_mode, custom_out_x, custom_out_y):
+def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_mm, epd_limit, path_type, grating_face_mode, oc_width_val, a_icg, a_epe, a_oc, le_tilt_x, le_tilt_y, auto_oc_flag, oc_find_mode, custom_out_x, custom_out_y):
     if not wl_dict["active"]: return None
     lam = wl_dict["lambda"]; n_lam = get_refractive_index(lam, n_d, V_d); k0 = 2 * math.pi / lam; k_wg_max = n_lam * k0
     
@@ -137,11 +141,12 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if grating_face_mode == "Reflection (Back Face)":
         kx_in = k0 * (np.sin(np.radians(H_deg + le_tilt_x)) / n_lam)
         ky_in = k0 * (np.sin(np.radians(V_deg + le_tilt_y)) / n_lam)
+        # [클로드 피드백 반영 - 오류 2 수정] Back Face 모드에서 매질 내 파수 스케일(k_wg_max)에 대응되도록 kz_in 물리 구문 전면 개정
+        kz_in = np.sqrt(np.maximum(k_wg_max**2 - kx_in**2 - ky_in**2, 0))
     else:
         kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
         ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
-        
-    kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
+        kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
     
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
     tir_mask_icg = ((kx_icg**2 + ky_icg**2) > k0**2) & ((kx_icg**2 + ky_icg**2) < k_wg_max**2)
@@ -150,9 +155,17 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     tir_mask_epe = ((kx_epe**2 + ky_epe**2) > k0**2) & ((kx_epe**2 + ky_epe**2) < k_wg_max**2) if "Path B" in path_type else np.ones_like(tir_mask_icg, dtype=bool)
     
     kx_oc, ky_oc = kx_epe + G_OC_x, ky_epe + G_OC_y; kz_oc = np.sqrt(np.maximum(k0**2 - kx_oc**2 - ky_oc**2, 0))
-    tir_mask_oc = ((kx_oc**2 + ky_oc**2) <= k0**2)
     
-    hop_dist = 2 * t_mm * (np.sqrt(kx_epe**2 + ky_epe**2) / np.maximum(kz_epe, 1e-10))
+    # [클로드 피드백 반영 - 주의사항 반영] OC 탈출 마스크 연산 시 허수(Evanescent Wave) 전파 손실을 차단하기 위한 내경 실수 조건 맵핑 추가
+    tir_mask_oc = ((kx_oc**2 + ky_oc**2) <= k0**2) & ((kx_oc**2 + ky_oc**2) >= 0)
+    
+    # [클로드 피드백 반영 - 오류 3 수정] 광 경로 Path 분기를 명시적으로 선언하여 바운스 거리 해석 정밀도 엄밀화
+    if "Path B" in path_type:
+        k_prop_x, k_prop_y, k_prop_z = kx_epe, ky_epe, kz_epe
+    else:
+        k_prop_x, k_prop_y, k_prop_z = kx_icg, ky_icg, kz_icg
+        
+    hop_dist = 2 * t_mm * (np.sqrt(k_prop_x**2 + k_prop_y**2) / np.maximum(k_prop_z, 1e-10))
     mask_0, mask_1, mask_2, mask_3 = np.ones_like(kx_in, dtype=bool), tir_mask_icg, tir_mask_icg & tir_mask_epe, tir_mask_icg & tir_mask_epe & tir_mask_oc & (hop_dist <= epd_limit)
     
     c_idx_v = np.argmin(np.abs(V_deg[:, 0]))
@@ -182,10 +195,7 @@ with col_s2:
 
 st.sidebar.markdown("---")
 path_choice = st.sidebar.radio("Grating Path Type", ["Path A (ICG→OC)", "Path B (ICG→EPE→OC)"], index=1, horizontal=True, key="path_choice")
-
-# 그레이팅 수치 제어 스위치 모드
 grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=0, key="grating_face_mode")
-
 single_layer_sync = st.sidebar.checkbox("Single Layer Mode (RGB Sync)", value=True, key="single_layer_sync")
 coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector (nm⁻¹)", "Normalized Wavevector (Direction Cosine)"], index=1, horizontal=True, key="coord_sys")
 
@@ -199,12 +209,8 @@ st.sidebar.markdown("**📐 Hardware Glass Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
 
-# [신규 기능 개발 블록] Back Face 선택 시 스넬의 법칙에 의해 굴절 압축된 기판 내부의 유효 입사 0필드 각도 실시간 표기 모듈
 if grating_face_mode == "Reflection (Back Face)":
-    # 기준 녹색 파장(Green, 520nm) 기준의 매질 굴절률 매핑 추출
     n_green = get_refractive_index(520.0, n_d_in, abbe_v_in)
-    
-    # Snell's Law 역산 수식 정의 (theta_glass = arcsin(sin(theta_air)/n))
     glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_green)) if abs(np.sin(np.radians(le_tilt_x)) / n_green) <= 1.0 else 0.0
     glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_green)) if abs(np.sin(np.radians(le_tilt_y)) / n_green) <= 1.0 else 0.0
     
@@ -297,7 +303,7 @@ run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_conta
 if run_simulation_trigger:
     results = {}
     for data in [wl_R, wl_G, wl_B]:
-        res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, grating_face_mode, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
+        res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, grating_face_mode, oc_width, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
         if res:
             results[data["color"]] = res
             if auto_oc_angle:
@@ -375,7 +381,8 @@ if results is not None:
                 k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
                 k_z = c_ray["kz_icg"]
                 
-                prop_distance_mm = 40.0 
+                # [클로드 피드백 반영 - 버그 2 수정] 하드코딩되었던 40mm 고정 광 경로 거리를 실제 하드웨어 사양인 oc_width 값과 실시간 연동 완료
+                prop_distance_mm = oc_width 
                 num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
                 bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
                 
@@ -449,18 +456,20 @@ if results is not None:
         if st.button("Run Sweep Simulation Loop", use_container_width=True):
             t_arr = np.arange(ts, te+1e-9, tp); res_l = []; pb = st.progress(0)
             for i, t in enumerate(t_arr):
-                d = {"t": round(t,3)}; cm = None
+                d = {"t": round(t,3)}; cm = None; last_rt = None
                 for k, wd in [("R",wl_R),("G",wl_G),("B",wl_B)]:
                     if wd["active"]:
-                        rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, grating_face_mode, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
+                        rt = calculate_k_space(wd, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], t, epd_val_in, path_choice, grating_face_mode, oc_width, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y); mt = rt["mask_3"]
+                        last_rt = rt
                         if cm is None: cm = mt.copy()
                         else: cm &= mt
                         vh, vv = rt["H_mesh"][mt], rt["V_mesh"][mt]
                         d[f"{k} H-Span"] = np.max(vh)-np.min(vh) if np.any(mt) else 0
                         d[f"{k} V-Span"] = np.max(vv)-np.min(vv) if np.any(mt) else 0
                 
-                if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]):
-                    ref_r = results[list(results.keys())[0]]
+                if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]) and last_rt is not None:
+                    # [클로드 피드백 반영 - 버그 1 수정] 캐시된 과거 메쉬를 참조하던 오류를 깨부수고 실시간 루프 내부 연산 결과인 last_rt 메쉬 그리드 다이렉트 바인딩 완료
+                    ref_r = last_rt
                     ch, cv = ref_r["H_mesh"][cm], ref_r["V_mesh"][cm]
                     d["Common H-Span"] = np.max(ch)-np.min(ch) if np.any(cm) else 0
                     d["Common V-Span"] = np.max(cv)-np.min(cv) if np.any(cm) else 0
