@@ -46,12 +46,12 @@ def import_settings(json_data):
 # --- 3. Widget Synchronization Logic ---
 def update_sync(k, val):
     if st.session_state.get("single_layer_sync"):
-        # [클로드 피드백 반영] 기존 쪼개기 방식의 취약점을 보완하기 위해 키 이름 매칭 패턴으로 로직 안정성 강화
         for suffix in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
-            if k.endswith(f"_{suffix}_slider") or k.endswith(f"_{suffix}_num"):
+            if k.endswith(f"_{suffix}"):
                 for color in ['R', 'G', 'B']:
                     st.session_state[f"{color}_{suffix}_slider"] = float(val)
                     st.session_state[f"{color}_{suffix}_num"] = float(val)
+                break
 
 def update_from_slider(k):
     val = st.session_state[f"{k}_slider"]
@@ -69,8 +69,8 @@ def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=
     target = st.sidebar if sidebar else st
     target.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     col1, col2 = target.columns([7, 3])
-    with col1: st.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=update_from_slider, args=(k,), label_visibility="collapsed", format=fmt)
-    with col2: st.number_input(label, float(min_val), float(max_val), key=f"{k}_num", step=float(step), on_change=update_from_num, args=(k,), label_visibility="collapsed", format=fmt)
+    col1.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=update_from_slider, args=(k,), label_visibility="collapsed", format=fmt)
+    col2.number_input(label, float(min_val), float(max_val), key=f"{k}_num", step=float(step), on_change=update_from_num, args=(k,), label_visibility="collapsed", format=fmt)
     return st.session_state[f"{k}_slider"]
 
 def dual_range_input(label, min_val, max_val, default_val, step, k):
@@ -79,15 +79,14 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
         st.session_state[f"{k}_min_num"], st.session_state[f"{k}_max_num"] = float(default_val[0]), float(default_val[1])
     st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([5.4, 2.3, 2.3])
-    with c1: st.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_min_num":float(st.session_state[f"{k}_slider"][0]), f"{k}_max_num":float(st.session_state[f"{k}_slider"][1])})], label_visibility="collapsed")
-    with c2: st.number_input("min", float(min_val), float(max_val), key=f"{k}_min_num", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_slider":(float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))})], label_visibility="collapsed", format="%.2f")
-    with c3: st.number_input("max", float(min_val), float(max_val), key=f"{k}_max_num", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_slider":(float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))})], label_visibility="collapsed", format="%.2f")
+    c1.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_min_num":float(st.session_state[f"{k}_slider"][0]), f"{k}_max_num":float(st.session_state[f"{k}_slider"][1])})], label_visibility="collapsed")
+    c2.number_input("min", float(min_val), float(max_val), key=f"{k}_min_num", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_slider":(float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))})], label_visibility="collapsed", format="%.2f")
+    c3.number_input("max", float(min_val), float(max_val), key=f"{k}_max_num", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_slider":(float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))})], label_visibility="collapsed", format="%.2f")
     return st.session_state[f"{k}_slider"]
 
 # --- 4. Computational Physics Engine ---
 def get_refractive_index(lam, n_d, V_d):
-    # [클로드 피드백 반영 - 오류 1 수정] Cauchy 2항 모델과 Abbe수 정의식 간의 표준 마이크로미터 단위계 계수 완전 정형화
-    lam_F, lam_d, lam_C = 0.4861, 0.5893, 0.6563  # μm 단위 고정
+    lam_F, lam_d, lam_C = 0.4861, 0.5893, 0.6563
     B = ((n_d - 1.0) / V_d) / (1.0 / lam_F**2 - 1.0 / lam_C**2)
     A = n_d - B / lam_d**2
     return A + B / (lam / 1000.0)**2
@@ -96,13 +95,11 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if not wl_dict["active"]: return None
     lam = wl_dict["lambda"]; n_lam = get_refractive_index(lam, n_d, V_d); k0 = 2 * math.pi / lam; k_wg_max = n_lam * k0
     
-    # 1. ICG / EPE Grating Vector Setup
     G_ICG_x, G_ICG_y = m_order * (2*math.pi/wl_dict["Lambda_ICG"]) * np.array([math.cos(math.radians(a_icg)), math.sin(math.radians(a_icg))])
     G_EPE_x, G_EPE_y = (0.0, 0.0)
     if "Path B" in path_type and wl_dict["Lambda_EPE"]:
         G_EPE_x, G_EPE_y = (2*math.pi/wl_dict["Lambda_EPE"]) * np.array([math.cos(math.radians(a_epe)), math.sin(math.radians(a_epe))])
         
-    # 반사형(후면 가공) 모드 선택 시 스넬의 법칙에 의한 기판 내부 굴절압축 물리 구현
     if grating_face_mode == "Reflection (Back Face)":
         k_x_center_in = k0 * (math.sin(math.radians(le_tilt_x)) / n_lam)
         k_y_center_in = k0 * (math.sin(math.radians(le_tilt_y)) / n_lam)
@@ -141,13 +138,12 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     if grating_face_mode == "Reflection (Back Face)":
         kx_in = k0 * (np.sin(np.radians(H_deg + le_tilt_x)) / n_lam)
         ky_in = k0 * (np.sin(np.radians(V_deg + le_tilt_y)) / n_lam)
-        # [클로드 피드백 반영 - 오류 2 수정] Back Face 모드에서 매질 내 파수 스케일(k_wg_max)에 대응되도록 kz_in 물리 구문 전면 개정
         kz_in = np.sqrt(np.maximum(k_wg_max**2 - kx_in**2 - ky_in**2, 0))
     else:
         kx_in = k0 * np.sin(np.radians(H_deg + le_tilt_x))
         ky_in = k0 * np.sin(np.radians(V_deg + le_tilt_y))
         kz_in = np.sqrt(np.maximum(k0**2 - kx_in**2 - ky_in**2, 0))
-    
+        
     kx_icg, ky_icg = kx_in + G_ICG_x, ky_in + G_ICG_y; kz_icg = np.sqrt(np.maximum(k_wg_max**2 - kx_icg**2 - ky_icg**2, 0))
     tir_mask_icg = ((kx_icg**2 + ky_icg**2) > k0**2) & ((kx_icg**2 + ky_icg**2) < k_wg_max**2)
     
@@ -155,11 +151,8 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     tir_mask_epe = ((kx_epe**2 + ky_epe**2) > k0**2) & ((kx_epe**2 + ky_epe**2) < k_wg_max**2) if "Path B" in path_type else np.ones_like(tir_mask_icg, dtype=bool)
     
     kx_oc, ky_oc = kx_epe + G_OC_x, ky_epe + G_OC_y; kz_oc = np.sqrt(np.maximum(k0**2 - kx_oc**2 - ky_oc**2, 0))
+    tir_mask_oc = ((kx_oc**2 + ky_oc**2) <= k0**2)
     
-    # [클로드 피드백 반영 - 주의사항 반영] OC 탈출 마스크 연산 시 허수(Evanescent Wave) 전파 손실을 차단하기 위한 내경 실수 조건 맵핑 추가
-    tir_mask_oc = ((kx_oc**2 + ky_oc**2) <= k0**2) & ((kx_oc**2 + ky_oc**2) >= 0)
-    
-    # [클로드 피드백 반영 - 오류 3 수정] 광 경로 Path 분기를 명시적으로 선언하여 바운스 거리 해석 정밀도 엄밀화
     if "Path B" in path_type:
         k_prop_x, k_prop_y, k_prop_z = kx_epe, ky_epe, kz_epe
     else:
@@ -209,15 +202,19 @@ st.sidebar.markdown("**📐 Hardware Glass Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
 
+# [버그 수정 완료] G파장 탭 슬라이더/숫자 입력에 바인딩된 실시간 파장 세션 데이터를 dynamic하게 추적 및 대입
+current_g_wl = st.session_state.get("G_wl_num", 520.0)
+
 if grating_face_mode == "Reflection (Back Face)":
-    n_green = get_refractive_index(520.0, n_d_in, abbe_v_in)
-    glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_green)) if abs(np.sin(np.radians(le_tilt_x)) / n_green) <= 1.0 else 0.0
-    glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_green)) if abs(np.sin(np.radians(le_tilt_y)) / n_green) <= 1.0 else 0.0
+    # ➔ 고정값 '520.0'을 날려버리고 사용자의 실시간 조절 파장 변수인 current_g_wl를 주사하도록 개정
+    n_dynamic_g = get_refractive_index(current_g_wl, n_d_in, abbe_v_in)
+    glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_x)) / n_dynamic_g) <= 1.0 else 0.0
+    glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_y)) / n_dynamic_g) <= 1.0 else 0.0
     
     st.sidebar.markdown(f"""
     <div style="background-color:rgba(16, 185, 129, 0.08); border:1px solid #10b981; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:10px;">
         <div style="font-size:11px; color:#10b981; font-weight:bold;">🔍 Snell's Law Back Face Refraction View</div>
-        <div style="font-size:11.5px; margin-top:3px; font-weight:500; color:#333;">• Green Refractive Index (n_G): <b>{n_green:.3f}</b></div>
+        <div style="font-size:11.5px; margin-top:3px; font-weight:500; color:#333;">• Dynamic G-Refractive Index (n_G): <b>{n_dynamic_g:.3f}</b> (@ {current_g_wl:.1f}nm)</div>
         <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle X: <span style="color:#10b981; font-weight:700;">{glass_tilt_x:.2f}°</span> (Air: {le_tilt_x:.1f}°)</div>
         <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle Y: <span style="color:#10b981; font-weight:700;">{glass_tilt_y:.2f}°</span> (Air: {le_tilt_y:.1f}°)</div>
     </div>
@@ -286,7 +283,7 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             
             st.markdown("*Diffraction Efficiencies (0.00 ~ 1.00)*")
             eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
-            eff_epe = dual_input("EPE Efficiency", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00
+            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
             eff_oc = dual_input("OC Efficiency", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
             return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
@@ -381,7 +378,6 @@ if results is not None:
                 k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
                 k_z = c_ray["kz_icg"]
                 
-                # [클로드 피드백 반영 - 버그 2 수정] 하드코딩되었던 40mm 고정 광 경로 거리를 실제 하드웨어 사양인 oc_width 값과 실시간 연동 완료
                 prop_distance_mm = oc_width 
                 num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
                 bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
@@ -439,7 +435,7 @@ if results is not None:
                 curr_kx, curr_kz = c["kx_icg"], c["kz_icg"]
                 if "Path B" in path_choice and r["G_EPE_x"] != 0:
                     fig_xz.add_annotation(x=c["kx_epe"]/sf, y=c["kz_icg"]/sf, ax=c["kx_icg"]/sf, ay=c["kz_icg"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="EPE")
-                    fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_epe"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
+                    fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_indigo" if cn=="B" else pc]], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
                     curr_kx, curr_kz = c["kx_epe"], c["kz_epe"]
                 fig_xz.add_annotation(x=c["kx_oc"]/sf, y=curr_kz/sf, ax=curr_kx/sf, ay=curr_kz/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="purple", text="OC")
                 fig_xz.add_trace(go.Scatter(x=[c["kx_oc"]/sf, c["kx_oc"]/sf], y=[curr_kz/sf, c["kz_oc"]/sf], mode="lines", line=dict(color="purple", dash="dot"), showlegend=False))
@@ -468,7 +464,6 @@ if results is not None:
                         d[f"{k} V-Span"] = np.max(vv)-np.min(vv) if np.any(mt) else 0
                 
                 if cm is not None and all([wl_R['active'], wl_G['active'], wl_B['active']]) and last_rt is not None:
-                    # [클로드 피드백 반영 - 버그 1 수정] 캐시된 과거 메쉬를 참조하던 오류를 깨부수고 실시간 루프 내부 연산 결과인 last_rt 메쉬 그리드 다이렉트 바인딩 완료
                     ref_r = last_rt
                     ch, cv = ref_r["H_mesh"][cm], ref_r["V_mesh"][cm]
                     d["Common H-Span"] = np.max(ch)-np.min(ch) if np.any(cm) else 0
