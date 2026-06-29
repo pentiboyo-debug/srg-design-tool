@@ -64,7 +64,6 @@ def update_from_num(k):
     update_sync(k, val)
 
 def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=False):
-    # [하한 에러 완전 디버깅 핵심 블록] 동기화 과정에서 세션에 잘못된 하한 미달 값이 주입되었을 때 최솟값(min_val)으로 강제 수렴(Clamping) 조치
     if f"{k}_slider" not in st.session_state: 
         st.session_state[f"{k}_slider"] = float(default_val)
     else:
@@ -87,7 +86,6 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
         st.session_state[f"{k}_slider"] = (float(default_val[0]), float(default_val[1]))
         st.session_state[f"{k}_min_num"], st.session_state[f"{k}_max_num"] = float(default_val[0]), float(default_val[1])
     else:
-        # 범위 입력 슬라이더도 동일하게 세션 마진 역전 및 하한 에러 방지 가드 적용
         s_min = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_slider"][0])))
         s_max = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_slider"][1])))
         st.session_state[f"{k}_slider"] = (s_min, s_max)
@@ -204,22 +202,24 @@ with col_s2:
     if uploaded: st.sidebar.button("Apply Settings", on_click=import_settings, args=(uploaded.getvalue().decode("utf-8"),), use_container_width=True)
 
 st.sidebar.markdown("---")
+# [사용자 확정 오리지널 UI 사양 동형 유지]
 path_choice = st.sidebar.radio("Grating Path Type", ["Path A (ICG→OC)", "Path B (ICG→EPE→OC)"], index=1, horizontal=True, key="path_choice")
-grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=0, key="grating_face_mode")
+grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=1, key="grating_face_mode")
 single_layer_sync = st.sidebar.checkbox("Single Layer Mode (RGB Sync)", value=True, key="single_layer_sync")
 coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector (nm⁻¹)", "Normalized Wavevector (Direction Cosine)"], index=1, horizontal=True, key="coord_sys")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**⚙️ Light Engine Alignment Tilt Panel**")
+# [JSON 오프셋 세팅 고정 가이드 피팅 완료]
 le_tilt_x = dual_input("LE Horizontal Incident Angle θ_x (°)", -30.0, 30.0, 0.0, 0.1, "le_tilt_x", "%.1f", sidebar=True)
-le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Ground, +:Sky)", -30.0, 30.0, 0.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
+le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Ground, +:Sky)", -30.0, 30.0, -5.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Hardware Glass Properties**")
-n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
-abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
+n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.74, 0.01, "n_d", "%.2f")
+abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 32.0, 0.1, "abbe_v", "%.1f")
 
-current_g_wl = st.session_state.get("G_wl_num", 520.0)
+current_g_wl = st.session_state.get("G_wl_num", 527.5)
 
 if grating_face_mode == "Reflection (Back Face)":
     n_dynamic_g = get_refractive_index(current_g_wl, n_d_in, abbe_v_in)
@@ -235,23 +235,23 @@ if grating_face_mode == "Reflection (Back Face)":
     </div>
     """, unsafe_allow_html=True)
 
-thickness_in = dual_input("Substrate Thickness t (mm)", 0.1, 3.0, 0.40, 0.01, "thickness", "%.2f") 
-epd_val_in = dual_input("Light Engine EPD Size (mm)", 1.0, 50.0, 3.5, 0.1, "epd_val", "%.1f") 
-h_fov = dual_range_input("Horizontal FOV Bounds (°)", -60, 60, (-30, 30), 0.01, "h_fov")
-v_fov = dual_range_input("Vertical FOV Bounds (°)", -60, 60, (-20, 20), 0.01, "v_fov")
+thickness_in = dual_input("Substrate Thickness t (mm)", 0.1, 3.0, 0.7, 0.01, "thickness", "%.2f") 
+epd_val_in = dual_input("Light Engine EPD Size (mm)", 1.0, 50.0, 3.3, 0.1, "epd_val", "%.1f") 
+h_fov = dual_range_input("Horizontal FOV Bounds (°)", -60, 60, (-12.1, 12.1), 0.01, "h_fov")
+v_fov = dual_range_input("Vertical FOV Bounds (°)", -60, 60, (-9.15, 9.15), 0.01, "v_fov")
 m_ord = st.sidebar.selectbox("Diffraction Order (m)", [1, -1, 2, -2], index=1, key="m_order_select")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler Aperture Form Factor**")
-oc_width = dual_input("OC Aperture Width (mm)", 5.0, 100.0, 30.0, 0.1, "oc_width", "%.1f", sidebar=True)
-oc_height = dual_input("OC Aperture Height (mm)", 5.0, 100.0, 20.0, 0.1, "oc_height", "%.1f", sidebar=True)
+oc_width = dual_input("OC Aperture Width (mm)", 5.0, 100.0, 18.0, 0.1, "oc_width", "%.1f", sidebar=True)
+oc_height = dual_input("OC Aperture Height (mm)", 5.0, 100.0, 15.0, 0.1, "oc_height", "%.1f", sidebar=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🔮 Grating Vector Rotation Alignment**")
-angle_icg = dual_input("ICG Vector Angle (°)", 0.0, 360.0, 0.0, 0.01, "angle_icg", "%.2f", sidebar=True)
-angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 240.0, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
+angle_icg = dual_input("ICG Vector Angle (°)", 0.0, 360.0, 111.34, 0.01, "angle_icg", "%.2f", sidebar=True)
+angle_epe = dual_input("EPE Vector Angle (°)", 0.0, 360.0, 58.5, 0.01, "angle_epe", "%.2f", sidebar=True) if "Path B" in path_choice else 0.0
 
-auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle Mode", value=False, key="auto_oc_angle")
+auto_oc_angle = st.sidebar.checkbox("Auto-find OC Angle Mode", value=True, key="auto_oc_angle")
 
 oc_find_mode = "Specular Target"
 custom_out_x = 0.0
@@ -279,40 +279,41 @@ else:
     angle_oc = dual_input("OC Vector Angle (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f", sidebar=True)
 
 st.sidebar.markdown("---")
-def get_wl_inputs(name, def_l, def_p, n_d, V_d):
-    act = st.sidebar.checkbox(f"Enable Wavelength {name}", value=True, key=f"{name}_active")
+def get_wl_inputs(name, def_l, def_icg_p, def_epe_p, def_eff_icg, def_eff_epe, def_eff_oc, def_active):
+    act = st.sidebar.checkbox(f"Enable Wavelength {name}", value=def_active, key=f"{name}_active")
     if act:
         with st.sidebar.container():
             st.markdown(f"**[{name} Channel] Parameters**")
             wl = dual_input("λ Wavelength (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl", "%.2f", sidebar=True)
-            limit_p = wl / get_refractive_index(wl, n_d, V_d)
-            icg_p = dual_input("Λ_ICG Period (nm)", 100.0, 1000.0, def_p, 0.01, f"{name}_icg", "%.2f", sidebar=True)
+            limit_p = wl / get_refractive_index(wl, n_d_in, abbe_v_in)
+            icg_p = dual_input("Λ_ICG Period (nm)", 100.0, 1000.0, def_icg_p, 0.01, f"{name}_icg", "%.2f", sidebar=True)
             if icg_p < limit_p: st.error(f"⚠️ Limit Error: Min {limit_p:.2f}nm required")
             else: st.caption(f"Physical Limit Grating Pitch: {limit_p:.2f}nm")
-            epe_p = dual_input("Λ_EPE Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_epe", "%.2f", sidebar=True) if "Path B" in path_choice else None
+            epe_p = dual_input("Λ_EPE Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_epe_p, 0.01, f"{name}_epe", "%.2f", sidebar=True) if "Path B" in path_choice else None
             
             if auto_oc_angle:
                 oc_p = st.session_state["auto_oc_pitch_val"]
             else:
-                oc_p = dual_input("Λ_OC Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_p, 0.01, f"{name}_oc", "%.2f", sidebar=True)
+                oc_p = dual_input("Λ_OC Period (nm)", 100.0, 1000.0, icg_p if single_layer_sync else def_icg_p, 0.01, f"{name}_oc", "%.2f", sidebar=True)
             
             st.markdown("*Diffraction Efficiencies (0.00 ~ 1.00)*")
-            eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
-            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
-            eff_oc = dual_input("OC Efficiency", 0.00, 1.00, 0.40, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
+            eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, def_eff_icg, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
+            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, def_eff_epe, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
+            eff_oc = dual_input("OC Efficiency", 0.00, 1.00, def_eff_oc, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
             return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
 
-wl_R = get_wl_inputs("R", 638.0, 300.0, n_d_in, abbe_v_in)
-wl_G = get_wl_inputs("G", 520.0, 300.0, n_d_in, abbe_v_in)
-wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
+# [JSON 팩터 하드웨어 수치 동형 적용 블록]
+wl_R = get_wl_inputs("R", 638.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
+wl_G = get_wl_inputs("G", 527.5, 413.88, 312.0, 0.55, 0.9, 0.1, True)
+wl_B = get_wl_inputs("B", 450.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
 
 st.sidebar.markdown("---")
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
 
 # --- 7. Synchronized Processing Pipeline Core Trigger ---
-if run_simulation_trigger:
+if run_simulation_trigger or st.session_state["srg_cached_results"] is None:
     results = {}
     for data in [wl_R, wl_G, wl_B]:
         res = calculate_k_space(data, n_d_in, abbe_v_in, m_ord, h_fov[0], h_fov[1], v_fov[0], v_fov[1], thickness_in, epd_val_in, path_choice, grating_face_mode, oc_width, angle_icg, angle_epe, angle_oc, le_tilt_x, le_tilt_y, auto_oc_angle, oc_find_mode, custom_out_x, custom_out_y)
@@ -322,7 +323,6 @@ if run_simulation_trigger:
                 st.session_state["auto_oc_pitch_val"] = res["Lambda_OC"]
                 st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
     st.session_state["srg_cached_results"] = results
-    st.rerun()
 
 # --- 8. Main Dashboard Visualization View ---
 results = st.session_state["srg_cached_results"]
@@ -460,7 +460,7 @@ if results is not None:
         fig_xz.update_layout(title=f"K-Space XZ Cross-Section View - Central Gaze Path ({coord_sys})", xaxis=dict(range=[-lim_z, lim_z], scaleanchor="y"), yaxis=dict(range=[0, lim_z]), height=600, plot_bgcolor="white")
         st.plotly_chart(fig_xz, use_container_width=True)
 
-    # --- Thickness Sweep Tab Layout Panel ---
+# --- Thickness Sweep Tab Layout Panel ---
     with tab_sweep:
         st.markdown("#### Substrate Thickness Sweep Panel (Optimization Loop)")
         c1, c2, c3 = st.columns(3); ts, te, tp = c1.number_input("Start Thickness", 0.1, 3.0, 0.2), c2.number_input("End Thickness", 0.1, 3.0, 1.0), c3.number_input("Step", 0.01, 1.0, 0.05)
