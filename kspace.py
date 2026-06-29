@@ -64,8 +64,17 @@ def update_from_num(k):
     update_sync(k, val)
 
 def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=False):
-    if f"{k}_slider" not in st.session_state: st.session_state[f"{k}_slider"] = float(default_val)
-    if f"{k}_num" not in st.session_state: st.session_state[f"{k}_num"] = float(default_val)
+    # [하한 에러 완전 디버깅 핵심 블록] 동기화 과정에서 세션에 잘못된 하한 미달 값이 주입되었을 때 최솟값(min_val)으로 강제 수렴(Clamping) 조치
+    if f"{k}_slider" not in st.session_state: 
+        st.session_state[f"{k}_slider"] = float(default_val)
+    else:
+        st.session_state[f"{k}_slider"] = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_slider"])))
+        
+    if f"{k}_num" not in st.session_state: 
+        st.session_state[f"{k}_num"] = float(default_val)
+    else:
+        st.session_state[f"{k}_num"] = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_num"])))
+        
     target = st.sidebar if sidebar else st
     target.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     col1, col2 = target.columns([7, 3])
@@ -77,6 +86,14 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
     if f"{k}_slider" not in st.session_state:
         st.session_state[f"{k}_slider"] = (float(default_val[0]), float(default_val[1]))
         st.session_state[f"{k}_min_num"], st.session_state[f"{k}_max_num"] = float(default_val[0]), float(default_val[1])
+    else:
+        # 범위 입력 슬라이더도 동일하게 세션 마진 역전 및 하한 에러 방지 가드 적용
+        s_min = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_slider"][0])))
+        s_max = max(float(min_val), min(float(max_val), float(st.session_state[f"{k}_slider"][1])))
+        st.session_state[f"{k}_slider"] = (s_min, s_max)
+        st.session_state[f"{k}_min_num"] = s_min
+        st.session_state[f"{k}_max_num"] = s_max
+        
     st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([5.4, 2.3, 2.3])
     c1.slider(label, float(min_val), float(max_val), key=f"{k}_slider", step=float(step), on_change=lambda: [st.session_state.update({f"{k}_min_num":float(st.session_state[f"{k}_slider"][0]), f"{k}_max_num":float(st.session_state[f"{k}_slider"][1])})], label_visibility="collapsed")
@@ -202,11 +219,9 @@ st.sidebar.markdown("**📐 Hardware Glass Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.75, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 35.0, 0.1, "abbe_v", "%.1f")
 
-# [버그 수정 완료] G파장 탭 슬라이더/숫자 입력에 바인딩된 실시간 파장 세션 데이터를 dynamic하게 추적 및 대입
 current_g_wl = st.session_state.get("G_wl_num", 520.0)
 
 if grating_face_mode == "Reflection (Back Face)":
-    # ➔ 고정값 '520.0'을 날려버리고 사용자의 실시간 조절 파장 변수인 current_g_wl를 주사하도록 개정
     n_dynamic_g = get_refractive_index(current_g_wl, n_d_in, abbe_v_in)
     glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_x)) / n_dynamic_g) <= 1.0 else 0.0
     glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_y)) / n_dynamic_g) <= 1.0 else 0.0
@@ -435,7 +450,7 @@ if results is not None:
                 curr_kx, curr_kz = c["kx_icg"], c["kz_icg"]
                 if "Path B" in path_choice and r["G_EPE_x"] != 0:
                     fig_xz.add_annotation(x=c["kx_epe"]/sf, y=c["kz_icg"]/sf, ax=c["kx_icg"]/sf, ay=c["kz_icg"]/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor=pc, text="EPE")
-                    fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_indigo" if cn=="B" else pc]], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
+                    fig_xz.add_trace(go.Scatter(x=[c["kx_epe"]/sf, c["kx_epe"]/sf], y=[c["kz_icg"]/sf, c["kz_epe"]/sf], mode="lines", line=dict(color=pc, dash="dot"), showlegend=False))
                     curr_kx, curr_kz = c["kx_epe"], c["kz_epe"]
                 fig_xz.add_annotation(x=c["kx_oc"]/sf, y=curr_kz/sf, ax=curr_kx/sf, ay=curr_kz/sf, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="purple", text="OC")
                 fig_xz.add_trace(go.Scatter(x=[c["kx_oc"]/sf, c["kx_oc"]/sf], y=[curr_kz/sf, c["kz_oc"]/sf], mode="lines", line=dict(color="purple", dash="dot"), showlegend=False))
