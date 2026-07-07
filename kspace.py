@@ -202,7 +202,6 @@ with col_s2:
     if uploaded: st.sidebar.button("Apply Settings", on_click=import_settings, args=(uploaded.getvalue().decode("utf-8"),), use_container_width=True)
 
 st.sidebar.markdown("---")
-# [사용자 확정 오리지널 UI 사양 동형 유지]
 path_choice = st.sidebar.radio("Grating Path Type", ["Path A (ICG→OC)", "Path B (ICG→EPE→OC)"], index=1, horizontal=True, key="path_choice")
 grating_face_mode = st.sidebar.radio("Grating Spatial Position Mode", ["Transmission (Front Face)", "Reflection (Back Face)"], index=1, key="grating_face_mode")
 single_layer_sync = st.sidebar.checkbox("Single Layer Mode (RGB Sync)", value=True, key="single_layer_sync")
@@ -210,14 +209,17 @@ coord_sys = st.sidebar.radio("K-Space Coordinates System", ["Absolute Wavevector
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**⚙️ Light Engine Alignment Tilt Panel**")
-# [JSON 오프셋 세팅 고정 가이드 피팅 완료]
 le_tilt_x = dual_input("LE Horizontal Incident Angle θ_x (°)", -30.0, 30.0, 0.0, 0.1, "le_tilt_x", "%.1f", sidebar=True)
 le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Ground, +:Sky)", -30.0, 30.0, -5.0, 0.1, "le_tilt_y", "%.1f", sidebar=True)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**📐 Hardware Glass Properties**")
+st.sidebar.markdown("**📐 Hardware Glass & Resin Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.74, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 32.0, 0.1, "abbe_v", "%.1f")
+
+# [기능 고도화 추가] 양산 갭 검증용 NIL Resin 잔류막 파라미터 제어 패널 연동
+n_resin_in = st.sidebar.number_input("NIL Resin Index (n_resin)", 1.000, 2.500, 1.920, step=0.001, format="%.3f")
+rlt_nm = st.sidebar.number_input("Resin 잔류막 두께 (RLT, nm)", 0.0, 1000.0, 200.0, step=10.0)
 
 current_g_wl = st.session_state.get("G_wl_num", 527.5)
 
@@ -226,12 +228,17 @@ if grating_face_mode == "Reflection (Back Face)":
     glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_x)) / n_dynamic_g) <= 1.0 else 0.0
     glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_y)) / n_dynamic_g) <= 1.0 else 0.0
     
+    # 레신 잔류막 바로 내부 진입 시점의 실효 기하 굴절각 실시간 역산 매핑 추가
+    resin_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_resin_in)) if abs(np.sin(np.radians(le_tilt_x)) / n_resin_in) <= 1.0 else 0.0
+    resin_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_resin_in)) if abs(np.sin(np.radians(le_tilt_y)) / n_resin_in) <= 1.0 else 0.0
+    
     st.sidebar.markdown(f"""
     <div style="background-color:rgba(16, 185, 129, 0.08); border:1px solid #10b981; padding:8px; border-radius:4px; margin-top:5px; margin-bottom:10px;">
-        <div style="font-size:11px; color:#10b981; font-weight:bold;">🔍 Snell's Law Back Face Refraction View</div>
-        <div style="font-size:11.5px; margin-top:3px; font-weight:500; color:#333;">• Dynamic G-Refractive Index (n_G): <b>{n_dynamic_g:.3f}</b> (@ {current_g_wl:.1f}nm)</div>
-        <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle X: <span style="color:#10b981; font-weight:700;">{glass_tilt_x:.2f}°</span> (Air: {le_tilt_x:.1f}°)</div>
-        <div style="font-size:11.5px; font-weight:500; color:#444;">• Effective Glass Angle Y: <span style="color:#10b981; font-weight:700;">{glass_tilt_y:.2f}°</span> (Air: {le_tilt_y:.1f}°)</div>
+        <div style="font-size:11px; color:#10b981; font-weight:bold;">🔍 Snell's Law Layer Refraction Analysis Window</div>
+        <div style="font-size:11.5px; margin-top:3px; font-weight:500; color:#333;">• Substrate G-Index (n_G): <b>{n_dynamic_g:.3f}</b> (@ {current_g_wl:.1f}nm)</div>
+        <div style="font-size:11.5px; font-weight:500; color:#444;">• Glass Internal Angle: <span style="color:#10b981; font-weight:700;">X: {glass_tilt_x:.4f}°, Y: {glass_tilt_y:.4f}°</span></div>
+        <div style="font-size:11.5px; border-top: 1px dashed #10b981; margin-top: 4px; padding-top: 4px; font-weight:500; color:#444;">• NIL Resin Index: <b>{n_resin_in:.3f}</b> (RLT: {rlt_nm:.0f}nm)</div>
+        <div style="font-size:11.5px; font-weight:500; color:#2563eb;">• <b>Resin Grating Input Angle</b>: <span style="color:#2563eb; font-weight:700;">X: {resin_tilt_x:.4f}°, Y: {resin_tilt_y:.4f}°</span></div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -298,13 +305,12 @@ def get_wl_inputs(name, def_l, def_icg_p, def_epe_p, def_eff_icg, def_eff_epe, d
             
             st.markdown("*Diffraction Efficiencies (0.00 ~ 1.00)*")
             eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, def_eff_icg, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
-            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, def_eff_epe, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
+            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, def_eff_eff_epe if 'def_eff_eff_epe' in locals() else def_eff_epe, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
             eff_oc = dual_input("OC Efficiency", 0.00, 1.00, def_eff_oc, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
             return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
 
-# [JSON 팩터 하드웨어 수치 동형 적용 블록]
 wl_R = get_wl_inputs("R", 638.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
 wl_G = get_wl_inputs("G", 527.5, 413.88, 312.0, 0.55, 0.9, 0.1, True)
 wl_B = get_wl_inputs("B", 450.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
@@ -394,8 +400,9 @@ if results is not None:
                 k_z = c_ray["kz_icg"]
                 
                 prop_distance_mm = oc_width 
-                num_bounces = prop_distance_mm / (2.0 * thickness_in * (k_rho / max(1e-10, k_z)))
-                bulk_path_length_mm = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
+                # [수치 안전 방어 패치] k_rho 가 극도로 작아질 때의 Zero-division 유동 락 차단
+                num_bounces = prop_distance_mm / max(1e-10, (2.0 * thickness_in * (k_rho / max(1e-10, k_z))))
+                bulk_path_length_mm = prop_distance_mm / max(1e-10, (k_rho / max(1e-10, r["k0"] * n_d_in)))
                 
                 tir_loss_factor = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_length_mm)
                 lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
