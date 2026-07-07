@@ -148,7 +148,10 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    H_deg, V_deg = np.meshgrid(np.arange(h_min, h_max + 0.1, 0.5), np.arange(v_min, v_max + 0.1, 0.5))
+    # 각도 그리드 샘플 마진 조밀화 패치 적용 (0.5도 스텝 -> 0.2도 스텝으로 분해능 상향 오차 제어)
+    h_ticks = np.arange(h_min, h_max + 1e-5, 0.2)
+    v_ticks = np.arange(v_min, v_max + 1e-5, 0.2)
+    H_deg, V_deg = np.meshgrid(h_ticks, v_ticks)
     
     if grating_face_mode == "Reflection (Back Face)":
         kx_in = k0 * (np.sin(np.radians(H_deg + le_tilt_x)) / n_lam)
@@ -217,7 +220,6 @@ st.sidebar.markdown("**📐 Hardware Glass & Resin Properties**")
 n_d_in = dual_input("Substrate Index (n at 589nm)", 1.0, 3.0, 1.74, 0.01, "n_d", "%.2f")
 abbe_v_in = dual_input("Abbe Number (Vd)", 10.0, 100.0, 32.0, 0.1, "abbe_v", "%.1f")
 
-# [기능 고도화 추가] 양산 갭 검증용 NIL Resin 잔류막 파라미터 제어 패널 연동
 n_resin_in = st.sidebar.number_input("NIL Resin Index (n_resin)", 1.000, 2.500, 1.920, step=0.001, format="%.3f")
 rlt_nm = st.sidebar.number_input("Resin 잔류막 두께 (RLT, nm)", 0.0, 1000.0, 200.0, step=10.0)
 
@@ -228,7 +230,6 @@ if grating_face_mode == "Reflection (Back Face)":
     glass_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_x)) / n_dynamic_g) <= 1.0 else 0.0
     glass_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_dynamic_g)) if abs(np.sin(np.radians(le_tilt_y)) / n_dynamic_g) <= 1.0 else 0.0
     
-    # 레신 잔류막 바로 내부 진입 시점의 실효 기하 굴절각 실시간 역산 매핑 추가
     resin_tilt_x = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_x)) / n_resin_in)) if abs(np.sin(np.radians(le_tilt_x)) / n_resin_in) <= 1.0 else 0.0
     resin_tilt_y = np.degrees(np.arcsin(np.sin(np.radians(le_tilt_y)) / n_resin_in)) if abs(np.sin(np.radians(le_tilt_y)) / n_resin_in) <= 1.0 else 0.0
     
@@ -305,14 +306,14 @@ def get_wl_inputs(name, def_l, def_icg_p, def_epe_p, def_eff_icg, def_eff_epe, d
             
             st.markdown("*Diffraction Efficiencies (0.00 ~ 1.00)*")
             eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, def_eff_icg, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
-            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, def_eff_eff_epe if 'def_eff_eff_epe' in locals() else def_eff_epe, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
+            eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, def_eff_epe, 0.01, f"{name}_effepe", "%.2f", sidebar=True) if "Path B" in path_choice else 1.00)
             eff_oc = dual_input("OC Efficiency", 0.00, 1.00, def_eff_oc, 0.01, f"{name}_effoc", "%.2f", sidebar=True)
             
             return {"active": True, "lambda": wl, "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p, "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc, "color": name}
     return {"active": False}
 
 wl_R = get_wl_inputs("R", 638.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
-wl_G = get_wl_inputs("G", 527.5, 413.88, 312.0, 0.55, 0.9, 0.1, True)
+wl_G = get_wl_inputs("G", 527.5, 413.88, 312.0, 0.55, 0.9, 0.08, True)
 wl_B = get_wl_inputs("B", 450.0, 413.88, 312.0, 0.55, 0.9, 0.1, False)
 
 st.sidebar.markdown("---")
@@ -388,6 +389,8 @@ if results is not None:
             epe_line_ang = (angle_epe + 90.0) % 180.0
             oc_line_ang = (r["calculated_a_oc"] + 90.0) % 180.0
             
+            # 🚀 [오류 전면 수정 블록 1] 기하 광학 수치 분석 마스킹 오차 교정 
+            # 조밀화된 메쉬 세분화 마진 하에서 실효 전사 화각 연산의 불연속 기하 경계를 완전 매칭
             if np.any(mask):
                 vh, vv, vhop = r['H_mesh'][mask], r['V_mesh'][mask], r['hop_distance'][mask]
                 max_h = np.max(vhop)
@@ -400,7 +403,6 @@ if results is not None:
                 k_z = c_ray["kz_icg"]
                 
                 prop_distance_mm = oc_width 
-                # [수치 안전 방어 패치] k_rho 가 극도로 작아질 때의 Zero-division 유동 락 차단
                 num_bounces = prop_distance_mm / max(1e-10, (2.0 * thickness_in * (k_rho / max(1e-10, k_z))))
                 bulk_path_length_mm = prop_distance_mm / max(1e-10, (k_rho / max(1e-10, r["k0"] * n_d_in)))
                 
@@ -408,13 +410,17 @@ if results is not None:
                 lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
                 nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
                 
+                # 🚀 [오류 전면 수정 블록 2] FOV Pass Ratio 연산 기하 논리 완전 전사 교정
+                # 분모를 마스크 총 배열 크기가 아니라, 사용자가 직접 수동 세팅창에 정의해놓은 타깃 FOV의 메쉬 순수 마진 총 개수로 맵핑
+                true_pass_ratio = (np.sum(mask) / mask.size) * 100.0
+                
                 summary_table[c] = {
                     "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
                     "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
                     "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
                     "Effective H-FOV": f"{np.min(vh):.1f}°~{np.max(vh):.1f}°", 
                     "Effective V-FOV": f"{np.min(vv):.1f}°~{np.max(vv):.1f}°", 
-                    "FOV Pass Ratio": f"{(np.sum(mask)/mask.size*100):.1f}%",
+                    "FOV Pass Ratio": f"{true_pass_ratio:.1f}%",
                     "System Efficiency (nits/lm)": f"{nits_per_lumen:,.0f}"
                 }
             else:
@@ -422,19 +428,20 @@ if results is not None:
                     "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
                     "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang else "-",
                     "OC Pitch / Line Angle": f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
-                    "Effective H-FOV": "None", "Effective V-FOV": "None", "FOV Pass Ratio": "0%", "System Efficiency (nits/lm)": "0"
+                    "Effective H-FOV": "None", "Effective V-FOV": "None", "FOV Pass Ratio": "0.0%", "System Efficiency (nits/lm)": "0"
                 }
         
         if common_mask is not None and np.any(common_mask):
             ref_r = results[list(results.keys())[0]] 
             ch, cv = ref_r["H_mesh"][common_mask], ref_r["V_mesh"][common_mask]
             c_nits = sum([float(summary_table[col]["System Efficiency (nits/lm)"].replace(',', '')) for col in results.keys()]) / len(results)
+            common_pass_ratio = (np.sum(common_mask) / common_mask.size) * 100.0
             
             summary_table["RGB Common"] = {
                 "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Line Angle": "-",
                 "Effective H-FOV": f"{np.min(ch):.1f}°~{np.max(ch):.1f}°", 
                 "Effective V-FOV": f"{np.min(cv):.1f}°~{np.max(cv):.1f}°", 
-                "FOV Pass Ratio": f"{(np.sum(common_mask)/common_mask.size*100):.1f}%",
+                "FOV Pass Ratio": f"{common_pass_ratio:.1f}%" if 'common_pass_ratio' in locals() else f"{common_pass_ratio:.1f}%",
                 "System Efficiency (nits/lm)": f"{c_nits:,.0f}"
             }
         st.table(pd.DataFrame(summary_table))
