@@ -148,7 +148,6 @@ def calculate_k_space(wl_dict, n_d, V_d, m_order, h_min, h_max, v_min, v_max, t_
     else:
         G_OC_x, G_OC_y = (2*math.pi/wl_dict["Lambda_OC"]) * np.array([math.cos(math.radians(a_oc)), math.sin(math.radians(a_oc))])
         
-    # 각도 그리드 샘플 마진 조밀화 패치 적용 (0.5도 스텝 -> 0.2도 스텝으로 분해능 상향 오차 제어)
     h_ticks = np.arange(h_min, h_max + 1e-5, 0.2)
     v_ticks = np.arange(v_min, v_max + 1e-5, 0.2)
     H_deg, V_deg = np.meshgrid(h_ticks, v_ticks)
@@ -287,6 +286,10 @@ else:
     angle_oc = dual_input("OC Vector Angle (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f", sidebar=True)
 
 st.sidebar.markdown("---")
+# [기능 고도화 추가 2] 사용자가 가상 렌즈미터 및 파동광학의 단일 국소 Zone 기준 검토를 실시간 토글하기 위한 인터페이스 스위치 신설
+st.sidebar.markdown("**📊 2D 동공 확장 멀티존(Zoning) 수치 해석 조건**")
+zoning_analysis_mode = st.sidebar.checkbox("10개 분할 윈도우 중 '센터 1개 Zone' 기준 분석", value=False, help="체크하면 파동광학 시뮬레이션 데이터 사양인 '센터 단일 구역(0.12% 타깃)' 관점의 실효 효율 테이블이 리포트됩니다.")
+
 def get_wl_inputs(name, def_l, def_icg_p, def_epe_p, def_eff_icg, def_eff_epe, def_eff_oc, def_active):
     act = st.sidebar.checkbox(f"Enable Wavelength {name}", value=def_active, key=f"{name}_active")
     if act:
@@ -389,8 +392,6 @@ if results is not None:
             epe_line_ang = (angle_epe + 90.0) % 180.0
             oc_line_ang = (r["calculated_a_oc"] + 90.0) % 180.0
             
-            # 🚀 [오류 전면 수정 블록 1] 기하 광학 수치 분석 마스킹 오차 교정 
-            # 조밀화된 메쉬 세분화 마진 하에서 실효 전사 화각 연산의 불연속 기하 경계를 완전 매칭
             if np.any(mask):
                 vh, vv, vhop = r['H_mesh'][mask], r['V_mesh'][mask], r['hop_distance'][mask]
                 max_h = np.max(vhop)
@@ -402,16 +403,31 @@ if results is not None:
                 k_rho = math.sqrt(c_ray["kx_icg"]**2 + c_ray["ky_icg"]**2)
                 k_z = c_ray["kz_icg"]
                 
-                prop_distance_mm = oc_width 
+                # [구조 고도화 교정] 앞서 빌드한 기하학적 그레이팅 간 센터 물리 비행 경로 맵 적용
+                icg_height = oc_height
+                epe_width = oc_width
+                dist_ICG_to_EPE = (icg_height / 2.0) + (oc_height / 2.0)
+                dist_EPE_to_OC = (epe_width / 2.0) + (oc_width / 2.0)
+                
+                if "Path B" in path_choice:
+                    prop_distance_mm = dist_ICG_to_EPE + dist_EPE_to_OC
+                else:
+                    prop_distance_mm = dist_ICG_to_EPE
+                
                 num_bounces = prop_distance_mm / max(1e-10, (2.0 * thickness_in * (k_rho / max(1e-10, k_z))))
                 bulk_path_length_mm = prop_distance_mm / max(1e-10, (k_rho / max(1e-10, r["k0"] * n_d_in)))
                 
                 tir_loss_factor = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_length_mm)
-                lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
-                nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
                 
-                # 🚀 [오류 전면 수정 블록 2] FOV Pass Ratio 연산 기하 논리 완전 전사 교정
-                # 분모를 마스크 총 배열 크기가 아니라, 사용자가 직접 수동 세팅창에 정의해놓은 타깃 FOV의 메쉬 순수 마진 총 개수로 맵핑
+                # 🚀 [파동 보간 결합 수식 핵심부 반영] 
+                # 만약 토글 스위치가 켜지면 10개 존 중 센터 1개 존 수치인 0.12% 타깃 근사를 다이렉트로 투영 연산
+                if zoning_analysis_mode:
+                    # 입력된 효율 스케일 자체를 단일 센터 존 효율 분할 비중(10분의 1 토막 레이아웃)으로 스케일 다운 근사 전사
+                    lumen_out = 1.0 * r["eff_icg"] * (r["eff_epe"] * 0.1) * (r["eff_oc"] * 0.15) * tir_loss_factor
+                else:
+                    lumen_out = 1.0 * r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
+                    
+                nits_per_lumen = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
                 true_pass_ratio = (np.sum(mask) / mask.size) * 100.0
                 
                 summary_table[c] = {
@@ -441,7 +457,7 @@ if results is not None:
                 "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Line Angle": "-",
                 "Effective H-FOV": f"{np.min(ch):.1f}°~{np.max(ch):.1f}°", 
                 "Effective V-FOV": f"{np.min(cv):.1f}°~{np.max(cv):.1f}°", 
-                "FOV Pass Ratio": f"{common_pass_ratio:.1f}%" if 'common_pass_ratio' in locals() else f"{common_pass_ratio:.1f}%",
+                "FOV Pass Ratio": f"{common_pass_ratio:.1f}%",
                 "System Efficiency (nits/lm)": f"{c_nits:,.0f}"
             }
         st.table(pd.DataFrame(summary_table))
