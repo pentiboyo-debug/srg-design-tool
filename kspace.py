@@ -199,6 +199,26 @@ def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=
     )
     return st.session_state[f"{k}_slider"]
 
+def _update_range_from_slider(k):
+    if f"{k}_slider" not in st.session_state:
+        return
+    value = st.session_state[f"{k}_slider"]
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        st.session_state[f"{k}_min_num"] = float(value[0])
+        st.session_state[f"{k}_max_num"] = float(value[1])
+
+
+def _update_slider_from_range(k):
+    min_key = f"{k}_min_num"
+    max_key = f"{k}_max_num"
+    if min_key not in st.session_state or max_key not in st.session_state:
+        return
+    st.session_state[f"{k}_slider"] = (
+        float(st.session_state[min_key]),
+        float(st.session_state[max_key])
+    )
+
+
 def dual_range_input(label, min_val, max_val, default_val, step, k):
     if f"{k}_slider" not in st.session_state:
         st.session_state[f"{k}_slider"]  = (float(default_val[0]), float(default_val[1]))
@@ -206,35 +226,28 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
         st.session_state[f"{k}_max_num"] = float(default_val[1])
     if st.session_state[f"{k}_slider"] is None:
         st.session_state[f"{k}_slider"] = (float(default_val[0]), float(default_val[1]))
-    if st.session_state[f"{k}_min_num"] is None:
+    if f"{k}_min_num" not in st.session_state or st.session_state[f"{k}_min_num"] is None:
         st.session_state[f"{k}_min_num"] = float(default_val[0])
-    if st.session_state[f"{k}_max_num"] is None:
+    if f"{k}_max_num" not in st.session_state or st.session_state[f"{k}_max_num"] is None:
         st.session_state[f"{k}_max_num"] = float(default_val[1])
     st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([5.4, 2.3, 2.3])
     c1.slider(
         label, float(min_val), float(max_val),
         key=f"{k}_slider", step=float(step),
-        on_change=lambda: st.session_state.update({
-            f"{k}_min_num": float(st.session_state[f"{k}_slider"][0]),
-            f"{k}_max_num": float(st.session_state[f"{k}_slider"][1])
-        }),
+        on_change=_update_range_from_slider, args=(k,),
         label_visibility="collapsed"
     )
     c2.number_input(
         "min", float(min_val), float(max_val),
         key=f"{k}_min_num", step=float(step),
-        on_change=lambda: st.session_state.update({
-            f"{k}_slider": (float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))
-        }),
+        on_change=_update_slider_from_range, args=(k,),
         label_visibility="collapsed", format="%.2f"
     )
     c3.number_input(
         "max", float(min_val), float(max_val),
         key=f"{k}_max_num", step=float(step),
-        on_change=lambda: st.session_state.update({
-            f"{k}_slider": (float(st.session_state[f"{k}_min_num"]), float(st.session_state[f"{k}_max_num"]))
-        }),
+        on_change=_update_slider_from_range, args=(k,),
         label_visibility="collapsed", format="%.2f"
     )
     return st.session_state[f"{k}_slider"]
