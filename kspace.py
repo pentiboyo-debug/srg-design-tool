@@ -172,16 +172,67 @@ def update_from_num(k):
     st.session_state[f"{k}_slider"] = float(val)
     update_sync(k, val)
 
+
+def _clamp_float(value, min_val, max_val, default_val):
+    try:
+        val = float(value)
+    except Exception:
+        return float(default_val)
+    return min(max(val, float(min_val)), float(max_val))
+
+
+def _sanitize_dual_input_state(k, min_val, max_val, default_val):
+    slider_key = f"{k}_slider"
+    num_key = f"{k}_num"
+
+    if slider_key not in st.session_state or st.session_state[slider_key] is None:
+        st.session_state[slider_key] = float(default_val)
+    else:
+        st.session_state[slider_key] = _clamp_float(st.session_state[slider_key], min_val, max_val, default_val)
+
+    if num_key not in st.session_state or st.session_state[num_key] is None:
+        st.session_state[num_key] = float(default_val)
+    else:
+        st.session_state[num_key] = _clamp_float(st.session_state[num_key], min_val, max_val, default_val)
+
+
+def _sanitize_dual_range_state(k, min_val, max_val, default_val):
+    slider_key = f"{k}_slider"
+    min_key = f"{k}_min_num"
+    max_key = f"{k}_max_num"
+
+    if slider_key not in st.session_state or st.session_state[slider_key] is None:
+        st.session_state[slider_key] = (float(default_val[0]), float(default_val[1]))
+    else:
+        value = st.session_state[slider_key]
+        if not (isinstance(value, (list, tuple)) and len(value) == 2):
+            st.session_state[slider_key] = (float(default_val[0]), float(default_val[1]))
+        else:
+            st.session_state[slider_key] = (
+                _clamp_float(value[0], min_val, max_val, default_val[0]),
+                _clamp_float(value[1], min_val, max_val, default_val[1])
+            )
+
+    if min_key not in st.session_state or st.session_state[min_key] is None:
+        st.session_state[min_key] = float(default_val[0])
+    else:
+        st.session_state[min_key] = _clamp_float(st.session_state[min_key], min_val, max_val, default_val[0])
+
+    if max_key not in st.session_state or st.session_state[max_key] is None:
+        st.session_state[max_key] = float(default_val[1])
+    else:
+        st.session_state[max_key] = _clamp_float(st.session_state[max_key], min_val, max_val, default_val[1])
+
+    if st.session_state[min_key] > st.session_state[max_key]:
+        st.session_state[min_key], st.session_state[max_key] = st.session_state[max_key], st.session_state[min_key]
+        st.session_state[slider_key] = (
+            st.session_state[min_key], st.session_state[max_key]
+        )
+
+
 # [FIX] dual_input: col1.slider / col2.number_input 으로 명시 호출하여 버전 독립성 확보
 def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=False):
-    if f"{k}_slider" not in st.session_state:
-        st.session_state[f"{k}_slider"] = float(default_val)
-    if f"{k}_num" not in st.session_state:
-        st.session_state[f"{k}_num"] = float(default_val)
-    if st.session_state[f"{k}_slider"] is None:
-        st.session_state[f"{k}_slider"] = float(default_val)
-    if st.session_state[f"{k}_num"] is None:
-        st.session_state[f"{k}_num"] = float(default_val)
+    _sanitize_dual_input_state(k, min_val, max_val, default_val)
     target = st.sidebar if sidebar else st
     target.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     col1, col2 = target.columns([7, 3])
@@ -220,16 +271,7 @@ def _update_slider_from_range(k):
 
 
 def dual_range_input(label, min_val, max_val, default_val, step, k):
-    if f"{k}_slider" not in st.session_state:
-        st.session_state[f"{k}_slider"]  = (float(default_val[0]), float(default_val[1]))
-        st.session_state[f"{k}_min_num"] = float(default_val[0])
-        st.session_state[f"{k}_max_num"] = float(default_val[1])
-    if st.session_state[f"{k}_slider"] is None:
-        st.session_state[f"{k}_slider"] = (float(default_val[0]), float(default_val[1]))
-    if f"{k}_min_num" not in st.session_state or st.session_state[f"{k}_min_num"] is None:
-        st.session_state[f"{k}_min_num"] = float(default_val[0])
-    if f"{k}_max_num" not in st.session_state or st.session_state[f"{k}_max_num"] is None:
-        st.session_state[f"{k}_max_num"] = float(default_val[1])
+    _sanitize_dual_range_state(k, min_val, max_val, default_val)
     st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([5.4, 2.3, 2.3])
     c1.slider(
