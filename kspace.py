@@ -456,6 +456,7 @@ def calculate_k_space(
 if "srg_cached_results"  not in st.session_state: st.session_state["srg_cached_results"]  = None
 if "auto_oc_pitch_val"   not in st.session_state: st.session_state["auto_oc_pitch_val"]   = 300.0
 if "auto_oc_vector_ang"  not in st.session_state: st.session_state["auto_oc_vector_ang"]  = 120.0
+if "auto_oc_results"     not in st.session_state: st.session_state["auto_oc_results"]     = {}
 if "ai_analysis_result"  not in st.session_state: st.session_state["ai_analysis_result"]  = None
 if "ai_analysis_params"  not in st.session_state: st.session_state["ai_analysis_params"]  = None
 
@@ -527,17 +528,37 @@ if auto_oc_angle:
         st.sidebar.markdown("*🎯 Target Out-Coupling Angle Setup*")
         custom_out_x = dual_input("Target Horizontal Out Angle (°)", -30.0, 30.0, 0.0, 0.1, "custom_out_x", "%.1f", sidebar=True)
         custom_out_y = dual_input("Target Vertical Out Angle (°)",   -30.0, 30.0, 0.0, 0.1, "custom_out_y", "%.1f", sidebar=True)
-    angle_oc     = st.session_state["auto_oc_vector_ang"]
-    auto_oc_line = (angle_oc + 90.0) % 180.0
-    theme_color  = "#4b96ff" if oc_find_mode == "Specular Target" else "#ff964b"
-    st.sidebar.markdown(f"""
-    <div style="background-color:rgba(75,150,255,0.08);border:1px solid {theme_color};padding:8px;border-radius:4px;margin-top:5px;margin-bottom:5px;">
-        <div style="font-size:11px;color:{theme_color};font-weight:bold;">🔒 OC Auto-Tracking Active ({oc_find_mode})</div>
-        <div style="font-size:12px;font-weight:600;margin-top:3px;">• Calculated Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
-        <div style="font-size:12px;font-weight:600;">• Vector Angle: {angle_oc:.2f}°</div>
-        <div style="font-size:12px;font-weight:600;">• Line Angle: {auto_oc_line:.2f}°</div>
-    </div>
-    """, unsafe_allow_html=True)
+
+    if single_layer_sync:
+        angle_oc     = st.session_state["auto_oc_vector_ang"]
+        auto_oc_line = (angle_oc + 90.0) % 180.0
+        theme_color  = "#4b96ff" if oc_find_mode == "Specular Target" else "#ff964b"
+        st.sidebar.markdown(f"""
+        <div style="background-color:rgba(75,150,255,0.08);border:1px solid {theme_color};padding:8px;border-radius:4px;margin-top:5px;margin-bottom:5px;">
+            <div style="font-size:11px;color:{theme_color};font-weight:bold;">🔒 OC Auto-Tracking Active ({oc_find_mode})</div>
+            <div style="font-size:12px;font-weight:600;margin-top:3px;">• Calculated Λ_OC: {st.session_state["auto_oc_pitch_val"]:.2f} nm</div>
+            <div style="font-size:12px;font-weight:600;">• Vector Angle: {angle_oc:.2f}°</div>
+            <div style="font-size:12px;font-weight:600;">• Line Angle: {auto_oc_line:.2f}°</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        auto_oc_summary = st.session_state.get("auto_oc_results", {})
+        st.sidebar.markdown("<div style='font-size:11px;font-weight:600;margin-top:5px;margin-bottom:4px;'>🔒 Per-channel OC Auto-Tracking</div>", unsafe_allow_html=True)
+        for color in ["R", "G", "B"]:
+            entry = auto_oc_summary.get(color, {})
+            pitch = entry.get("pitch", st.session_state.get("auto_oc_pitch_val", 300.0))
+            angle = entry.get("angle", st.session_state.get("auto_oc_vector_ang", 120.0))
+            line_angle = (angle + 90.0) % 180.0
+            color_hex = {"R": "#ef4444", "G": "#10b981", "B": "#3b82f6"}[color]
+            st.sidebar.markdown(f"""
+            <div style="background-color:rgba(75,150,255,0.04);border:1px solid {color_hex};padding:7px;border-radius:4px;margin-bottom:4px;">
+                <div style="font-size:11px;color:{color_hex};font-weight:bold;">{color} Channel</div>
+                <div style="font-size:11.5px;margin-top:2px;">• Λ_OC: {pitch:.2f} nm</div>
+                <div style="font-size:11.5px;">• Vector Angle: {angle:.2f}°</div>
+                <div style="font-size:11.5px;">• Line Angle: {line_angle:.2f}°</div>
+            </div>
+            """, unsafe_allow_html=True)
+        angle_oc = st.session_state.get("auto_oc_vector_ang", 120.0)
 else:
     angle_oc = dual_input("OC Vector Angle (°)", 0.0, 360.0, 120.0, 0.01, "angle_oc", "%.2f", sidebar=True)
 
@@ -549,8 +570,15 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
         return {"active": False}
     with st.sidebar.container():
         st.markdown(f"**[{name} Channel] Parameters**")
+        if single_layer_sync:
+            channel_n_d = float(n_d)
+            channel_abbe_v = float(V_d)
+        else:
+            channel_n_d = dual_input(f"{name} Substrate Index (n at 589nm)", 1.0, 3.0, float(n_d), 0.01, f"{name}_n_d", "%.2f", sidebar=True)
+            channel_abbe_v = dual_input(f"{name} Abbe Number (Vd)", 10.0, 100.0, float(V_d), 0.1, f"{name}_abbe_v", "%.1f", sidebar=True)
+
         wl      = dual_input("λ Wavelength (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl",  "%.2f", sidebar=True)
-        limit_p = wl / get_refractive_index(wl, n_d, V_d)
+        limit_p = wl / get_refractive_index(wl, channel_n_d, channel_abbe_v)
         icg_p   = dual_input("Λ_ICG Period (nm)", 100.0, 1000.0, def_p, 0.01, f"{name}_icg", "%.2f", sidebar=True)
         if icg_p < limit_p:
             st.error(f"⚠️ Limit Error: Min {limit_p:.2f}nm required")
@@ -562,7 +590,11 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
                            0.01, f"{name}_epe", "%.2f", sidebar=True) if "Path B" in path_choice else None
 
         if auto_oc_angle:
-            oc_p = st.session_state["auto_oc_pitch_val"]
+            if single_layer_sync:
+                oc_p = st.session_state["auto_oc_pitch_val"]
+            else:
+                auto_oc_state = st.session_state.get("auto_oc_results", {})
+                oc_p = auto_oc_state.get(name, {}).get("pitch", st.session_state.get("auto_oc_pitch_val", def_p))
         else:
             oc_p = dual_input("Λ_OC Period (nm)", 100.0, 1000.0,
                               icg_p if single_layer_sync else def_p,
@@ -579,6 +611,7 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             "active": True, "lambda": wl,
             "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p,
             "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc,
+            "n_d": float(channel_n_d), "abbe_v": float(channel_abbe_v),
             "color": name,
         }
 
@@ -631,9 +664,10 @@ run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_conta
 # --- 7. Simulation Trigger ---
 if run_simulation_trigger:
     results = {}
+    auto_oc_results = {}
     for data in [wl_R, wl_G, wl_B]:
         res = calculate_k_space(
-            data, n_d_in, abbe_v_in, m_ord,
+            data, data.get("n_d", n_d_in), data.get("abbe_v", abbe_v_in), m_ord,
             h_fov[0], h_fov[1], v_fov[0], v_fov[1],
             thickness_in, epd_val_in, path_choice, grating_face_mode, oc_width,
             angle_icg, angle_epe, angle_oc,
@@ -643,8 +677,14 @@ if run_simulation_trigger:
         if res:
             results[data["color"]] = res
             if auto_oc_angle:
-                st.session_state["auto_oc_pitch_val"]  = res["Lambda_OC"]
-                st.session_state["auto_oc_vector_ang"] = res["calculated_a_oc"]
+                auto_oc_results[data["color"]] = {
+                    "pitch": float(res["Lambda_OC"]),
+                    "angle": float(res["calculated_a_oc"]),
+                }
+                if single_layer_sync:
+                    st.session_state["auto_oc_pitch_val"]  = float(res["Lambda_OC"])
+                    st.session_state["auto_oc_vector_ang"] = float(res["calculated_a_oc"])
+    st.session_state["auto_oc_results"] = auto_oc_results
     st.session_state["srg_cached_results"] = results
     # 새 시뮬레이션 실행 시 이전 AI 분석 초기화
     st.session_state["ai_analysis_result"] = None
@@ -777,7 +817,7 @@ if results is not None:
                 summary_table[c] = {
                     "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
                     "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang is not None else "-",
-                    "OC Pitch / Line Angle":  f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
+                    "OC Pitch / Vector / Line Angle": f"{r['Lambda_OC']:.1f}nm / {r['calculated_a_oc']:.1f}° / {oc_line_ang:.1f}°",
                     "Effective H-FOV": f"{np.min(vh):.1f}°~{np.max(vh):.1f}°",
                     "Effective V-FOV": f"{np.min(vv):.1f}°~{np.max(vv):.1f}°",
                     "FOV Pass Ratio":  f"{np.sum(mask)/mask.size*100:.1f}%",
@@ -787,7 +827,7 @@ if results is not None:
                 summary_table[c] = {
                     "ICG Pitch / Line Angle": f"{r['Lambda_ICG']:.1f}nm / {icg_line_ang:.1f}°",
                     "EPE Pitch / Line Angle": f"{r['Lambda_EPE']:.1f}nm / {epe_line_ang:.1f}°" if epe_line_ang is not None else "-",
-                    "OC Pitch / Line Angle":  f"{r['Lambda_OC']:.1f}nm / {oc_line_ang:.1f}°",
+                    "OC Pitch / Vector / Line Angle":  f"{r['Lambda_OC']:.1f}nm / {r['calculated_a_oc']:.1f}° / {oc_line_ang:.1f}°",
                     "Effective H-FOV": "None", "Effective V-FOV": "None",
                     "FOV Pass Ratio": "0%", "System Efficiency (nits/lm)": "0",
                 }
@@ -799,7 +839,7 @@ if results is not None:
             c_nits = (sum(float(summary_table[col]["System Efficiency (nits/lm)"].replace(",", ""))
                           for col in results) / len(results))
             summary_table["RGB Common"] = {
-                "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Line Angle": "-",
+                "ICG Pitch / Line Angle": "-", "EPE Pitch / Line Angle": "-", "OC Pitch / Vector / Line Angle": "-",
                 "Effective H-FOV": f"{np.min(ch):.1f}°~{np.max(ch):.1f}°",
                 "Effective V-FOV": f"{np.min(cv):.1f}°~{np.max(cv):.1f}°",
                 "FOV Pass Ratio":  f"{np.sum(common_mask)/common_mask.size*100:.1f}%",
@@ -961,6 +1001,7 @@ if results is not None:
                     line += f" | Λ_EPE={wd['Lambda_EPE']:.1f}nm"
                 line += (f" | Λ_OC={wd['Lambda_OC']:.1f}nm | "
                          f"η_ICG={wd['eff_icg']:.2f} / η_EPE={wd['eff_epe']:.2f} / η_OC={wd['eff_oc']:.2f}")
+                line += (f" | n_d={wd.get('n_d', p['n_d']):.3f} | Abbe Vd={wd.get('abbe_v', p['abbe_v']):.1f}")
                 wl_lines.append(line)
             wl_text = "\n".join(wl_lines) if wl_lines else "  (활성 채널 없음)"
 
