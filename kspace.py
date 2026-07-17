@@ -54,26 +54,51 @@ def call_claude_api(api_key: str, prompt: str,
 
 
 def call_gemini_api(api_key: str, prompt: str,
-                    model: str = "gemini-1.5-flash",
+                    model: str = "gemini-2.0-flash",
                     max_output_tokens: int = 2000) -> str:
     """
     urllib만으로 Google Gemini API 호출.
+    모델명이 지원되지 않으면 여러 후보 모델/엔드포인트로 자동 재시도한다.
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": max_output_tokens}
     }).encode("utf-8")
     headers = {"Content-Type": "application/json"}
-    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-    except urllib.error.HTTPError as e:
-        body = json.loads(e.read().decode("utf-8"))
-        msg = body.get("error", {}).get("message", str(e))
-        raise RuntimeError(f"HTTP {e.code}: {msg}")
+
+    model_candidates = []
+    if model:
+        model_candidates.append(model)
+    model_candidates.extend([
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ])
+
+    seen = set()
+    for candidate in model_candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+
+        for version in ["v1", "v1beta"]:
+            url = f"https://generativelanguage.googleapis.com/{version}/models/{candidate}:generateContent?key={api_key}"
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+                    return result["candidates"][0]["content"]["parts"][0]["text"]
+            except urllib.error.HTTPError as e:
+                body = json.loads(e.read().decode("utf-8"))
+                msg = body.get("error", {}).get("message", str(e))
+                if e.code == 404:
+                    continue
+                raise RuntimeError(f"HTTP {e.code}: {msg}")
+            except Exception as e:
+                raise RuntimeError(str(e))
+
+    raise RuntimeError("사용 가능한 Gemini 모델을 찾지 못했습니다. Google AI Studio에서 API 키와 모델 접근 권한을 확인해주세요.")
 
 
 def get_secret_value(key_name: str, fallback: str = "") -> str:
@@ -129,11 +154,20 @@ def update_sync(k, val):
                 break
 
 def update_from_slider(k):
+    if f"{k}_slider" not in st.session_state:
+        st.session_state[f"{k}_slider"] = 0.0
+    if f"{k}_num" not in st.session_state:
+        st.session_state[f"{k}_num"] = 0.0
     val = st.session_state[f"{k}_slider"]
     st.session_state[f"{k}_num"] = float(val)
     update_sync(k, val)
 
+
 def update_from_num(k):
+    if f"{k}_num" not in st.session_state:
+        st.session_state[f"{k}_num"] = 0.0
+    if f"{k}_slider" not in st.session_state:
+        st.session_state[f"{k}_slider"] = 0.0
     val = st.session_state[f"{k}_num"]
     st.session_state[f"{k}_slider"] = float(val)
     update_sync(k, val)
@@ -143,6 +177,10 @@ def dual_input(label, min_val, max_val, default_val, step, k, fmt=None, sidebar=
     if f"{k}_slider" not in st.session_state:
         st.session_state[f"{k}_slider"] = float(default_val)
     if f"{k}_num" not in st.session_state:
+        st.session_state[f"{k}_num"] = float(default_val)
+    if st.session_state[f"{k}_slider"] is None:
+        st.session_state[f"{k}_slider"] = float(default_val)
+    if st.session_state[f"{k}_num"] is None:
         st.session_state[f"{k}_num"] = float(default_val)
     target = st.sidebar if sidebar else st
     target.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
@@ -165,6 +203,12 @@ def dual_range_input(label, min_val, max_val, default_val, step, k):
     if f"{k}_slider" not in st.session_state:
         st.session_state[f"{k}_slider"]  = (float(default_val[0]), float(default_val[1]))
         st.session_state[f"{k}_min_num"] = float(default_val[0])
+        st.session_state[f"{k}_max_num"] = float(default_val[1])
+    if st.session_state[f"{k}_slider"] is None:
+        st.session_state[f"{k}_slider"] = (float(default_val[0]), float(default_val[1]))
+    if st.session_state[f"{k}_min_num"] is None:
+        st.session_state[f"{k}_min_num"] = float(default_val[0])
+    if st.session_state[f"{k}_max_num"] is None:
         st.session_state[f"{k}_max_num"] = float(default_val[1])
     st.markdown(f"<div style='font-size:11px; margin-top:5px;'>{label}</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([5.4, 2.3, 2.3])
