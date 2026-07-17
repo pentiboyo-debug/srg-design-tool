@@ -81,6 +81,11 @@ def import_settings(json_data):
 #        조건이 절대 True가 되지 않아 동기화가 완전히 무력화되어 있었음. 수정 완료.
 def update_sync(k, val):
     if st.session_state.get("single_layer_sync"):
+        # [FIX] angle_icg / angle_epe / angle_oc 키가 각각 _icg / _epe / _oc 로 끝나서
+        #        파장별 그레이팅 주기 동기화 조건에 오매칭되는 버그 수정.
+        #        동기화는 반드시 R_ / G_ / B_ 로 시작하는 파장채널 키에만 적용.
+        if not (k.startswith("R_") or k.startswith("G_") or k.startswith("B_")):
+            return
         for suffix in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
             if k.endswith(f"_{suffix}"):
                 for color in ['R', 'G', 'B']:
