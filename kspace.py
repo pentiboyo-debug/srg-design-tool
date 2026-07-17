@@ -5,12 +5,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import json
 import os
-
-try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
+import urllib.request
+import urllib.error
 
 # --- 1. Base Layout & Compressed UI CSS ---
 st.set_page_config(page_title="SRG DOE Waveguide Design Tool", layout="wide")
@@ -27,7 +23,36 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. Configuration Management ---
+# --- 2. Claude API 호출 함수 (urllib 내장 라이브러리 사용 — 별도 패키지 불필요) ---
+def call_claude_api(api_key: str, prompt: str,
+                    model: str = "claude-sonnet-4-6",
+                    max_tokens: int = 2000) -> str:
+    """
+    anthropic 패키지 없이 urllib 만으로 Anthropic API 호출.
+    표준 라이브러리만 사용하므로 추가 설치 불필요.
+    """
+    url     = "https://api.anthropic.com/v1/messages"
+    payload = json.dumps({
+        "model":      model,
+        "max_tokens": max_tokens,
+        "messages":   [{"role": "user", "content": prompt}]
+    }).encode("utf-8")
+    headers = {
+        "Content-Type":      "application/json",
+        "x-api-key":         api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result["content"][0]["text"]
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode("utf-8"))
+        msg  = body.get("error", {}).get("message", str(e))
+        raise RuntimeError(f"HTTP {e.code}: {msg}")
+
+# --- 3. Configuration Management ---
 def export_settings():
     settings = {}
     for key, val in st.session_state.items():
@@ -423,18 +448,25 @@ wl_G = get_wl_inputs("G", 520.0, 300.0, n_d_in, abbe_v_in)
 wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**🤖 AI Design Briefing — API Key**")
-_env_key = os.environ.get("ANTHROPIC_API_KEY", "")
-ai_api_key = st.sidebar.text_input(
-    "Anthropic API Key",
-    value=_env_key,
-    type="password",
-    placeholder="sk-ant-...",
-    help="환경변수 ANTHROPIC_API_KEY가 설정돼 있으면 자동 입력됩니다.",
-    label_visibility="collapsed"
+st.sidebar.markdown("**🤖 AI Design Briefing**")
+ai_mode = st.sidebar.radio(
+    "AI 사용 방식",
+    ["🔑 API Key 직접 호출", "📋 프롬프트 복사 (무료)"],
+    index=1,
+    key="ai_mode_sel",
+    help="API Key 없이도 '프롬프트 복사' 모드로 Claude.ai에서 무료로 사용할 수 있습니다."
 )
-if not ANTHROPIC_AVAILABLE:
-    st.sidebar.warning("⚠️ anthropic 패키지 미설치\n`pip install anthropic`")
+ai_api_key = ""
+if ai_mode == "🔑 API Key 직접 호출":
+    _env_key  = os.environ.get("ANTHROPIC_API_KEY", "")
+    ai_api_key = st.sidebar.text_input(
+        "Anthropic API Key",
+        value=_env_key,
+        type="password",
+        placeholder="sk-ant-...",
+        help="환경변수 ANTHROPIC_API_KEY가 설정돼 있으면 자동 입력됩니다.",
+        label_visibility="collapsed"
+    )
 
 st.sidebar.markdown("---")
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
@@ -753,86 +785,72 @@ if results is not None:
     with tab_ai:
         st.markdown("### 🤖 AI Design Briefing")
         st.caption(
-            "시뮬레이션 결과를 AI가 분석하고, 설계 개선 방향을 제안합니다. "
-            "사이드바에 Anthropic API Key를 입력한 후 아래 버튼을 클릭하세요."
+            "시뮬레이션 결과를 AI가 분석하고 개선 방향을 제안합니다.  \n"
+            "**API Key 없이도** 프롬프트 복사 모드로 Claude.ai에서 무료로 사용할 수 있습니다."
         )
 
-        # ── AI 분석 데이터 준비 함수 ────────────────────────────────────────
+        # ── 프롬프트 생성 함수 ─────────────────────────────────────────────
         def build_ai_prompt(params, sim_results):
             p = params
-            path_str  = p["path_choice"]
-            face_str  = p["grating_face_mode"]
 
-            # 파장별 파라미터 텍스트
+            # 파장별 파라미터
             wl_lines = []
             for ch_key, wd in [("R", p["wl_R"]), ("G", p["wl_G"]), ("B", p["wl_B"])]:
                 if not wd.get("active"):
                     continue
-                line = (
-                    f"  [{ch_key}] λ={wd['lambda']:.1f}nm | "
-                    f"Λ_ICG={wd['Lambda_ICG']:.1f}nm"
-                )
+                line = (f"  [{ch_key}] λ={wd['lambda']:.1f}nm | "
+                        f"Λ_ICG={wd['Lambda_ICG']:.1f}nm")
                 if wd.get("Lambda_EPE"):
                     line += f" | Λ_EPE={wd['Lambda_EPE']:.1f}nm"
-                line += (
-                    f" | Λ_OC={wd['Lambda_OC']:.1f}nm | "
-                    f"η_ICG={wd['eff_icg']:.2f} / η_EPE={wd['eff_epe']:.2f} / η_OC={wd['eff_oc']:.2f}"
-                )
+                line += (f" | Λ_OC={wd['Lambda_OC']:.1f}nm | "
+                         f"η_ICG={wd['eff_icg']:.2f} / η_EPE={wd['eff_epe']:.2f} / η_OC={wd['eff_oc']:.2f}")
                 wl_lines.append(line)
             wl_text = "\n".join(wl_lines) if wl_lines else "  (활성 채널 없음)"
 
-            # 시뮬레이션 결과 텍스트
+            # 시뮬레이션 결과
             res_lines = []
             common_mask = None
             for color, r in sim_results.items():
                 mask = r["mask_3"]
-                if common_mask is None:
-                    common_mask = mask.copy()
-                else:
-                    common_mask &= mask
-
+                common_mask = mask.copy() if common_mask is None else (common_mask & mask)
                 if np.any(mask):
-                    vh = r["H_mesh"][mask];  vv = r["V_mesh"][mask]
-                    pass_pct = np.sum(mask) / mask.size * 100
+                    vh = r["H_mesh"][mask]; vv = r["V_mesh"][mask]
                     res_lines.append(
                         f"  [{color}] H-FOV: {np.min(vh):.1f}°~{np.max(vh):.1f}° | "
                         f"V-FOV: {np.min(vv):.1f}°~{np.max(vv):.1f}° | "
-                        f"Pass: {pass_pct:.1f}%"
+                        f"Pass: {np.sum(mask)/mask.size*100:.1f}%"
                     )
                 else:
                     res_lines.append(f"  [{color}] TIR 조건 불충족 — 유효 FOV 없음")
 
             if common_mask is not None and np.any(common_mask):
                 ref = list(sim_results.values())[0]
-                ch  = ref["H_mesh"][common_mask];  cv = ref["V_mesh"][common_mask]
-                comm_pct = np.sum(common_mask) / common_mask.size * 100
+                ch  = ref["H_mesh"][common_mask]; cv = ref["V_mesh"][common_mask]
                 res_lines.append(
                     f"\n  [RGB 공통] H-FOV: {np.min(ch):.1f}°~{np.max(ch):.1f}° | "
                     f"V-FOV: {np.min(cv):.1f}°~{np.max(cv):.1f}° | "
-                    f"Pass: {comm_pct:.1f}%"
+                    f"Pass: {np.sum(common_mask)/common_mask.size*100:.1f}%"
                 )
             else:
                 res_lines.append("\n  [RGB 공통] 공통 유효 FOV 없음")
-            res_text = "\n".join(res_lines)
 
-            prompt = f"""당신은 AR 광학 설계 전문가입니다.
+            return f"""당신은 AR 광학 설계 전문가입니다.
 아래 SRG DOE Waveguide 프리검토 설계 파라미터와 K-space 시뮬레이션 결과를 분석하여
 개발자에게 한국어로 브리핑과 개선 제안을 해주세요.
 
 ────────────────────────────────
 ## 현재 설계 파라미터
 ────────────────────────────────
-그레이팅 경로  : {path_str}
-가공 면         : {face_str}
-웨이브가이드 굴절률 (n_d @589nm) : {p['n_d']:.3f}
-Abbe Number (Vd)  : {p['abbe_v']:.1f}
-기판 두께         : {p['thickness_mm']:.2f} mm
-LE EPD 크기       : {p['epd_mm']:.1f} mm
-입사 H-FOV        : {p['h_fov'][0]:.1f}° ~ {p['h_fov'][1]:.1f}°
-입사 V-FOV        : {p['v_fov'][0]:.1f}° ~ {p['v_fov'][1]:.1f}°
-OC 개구 크기      : {p['oc_width']:.1f} mm × {p['oc_height']:.1f} mm
-회절 차수 m       : {p['m_ord']}
-LE 틸트           : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}°
+그레이팅 경로         : {p['path_choice']}
+가공 면               : {p['grating_face_mode']}
+웨이브가이드 굴절률   : n_d = {p['n_d']:.3f}  (Abbe Vd = {p['abbe_v']:.1f})
+기판 두께             : {p['thickness_mm']:.2f} mm
+LE EPD 크기           : {p['epd_mm']:.1f} mm
+입사 H-FOV            : {p['h_fov'][0]:.1f}° ~ {p['h_fov'][1]:.1f}°
+입사 V-FOV            : {p['v_fov'][0]:.1f}° ~ {p['v_fov'][1]:.1f}°
+OC 개구 크기          : {p['oc_width']:.1f} mm × {p['oc_height']:.1f} mm
+회절 차수 m           : {p['m_ord']}
+LE 틸트               : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}°
 
 파장별 그레이팅 설계값:
 {wl_text}
@@ -840,7 +858,7 @@ LE 틸트           : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}°
 ────────────────────────────────
 ## K-Space 시뮬레이션 결과
 ────────────────────────────────
-{res_text}
+{chr(10).join(res_lines)}
 
 ────────────────────────────────
 위 내용을 바탕으로 아래 4가지 섹션으로 나누어 응답해주세요.
@@ -852,95 +870,122 @@ LE 틸트           : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}°
 ### 2. 🔍 시뮬레이션 결과 분석
 - 각 파장(R/G/B)의 TIR 조건 충족 여부 및 유효 FOV 평가
 - RGB 공통 FOV의 균형성 (색수차 관점)
-- 시스템 효율 관련 주요 포인트
 - 현재 설계에서 두드러지는 강점 또는 한계
 
 ### 3. 🚀 개선 방향 제안 (3~5가지)
-각 제안마다 다음 형식으로 작성해주세요:
-- **제안 항목**: 구체적인 파라미터 변경 방향 (수치 예시 포함)
-- **물리적 근거**: 왜 이 변경이 효과적인지
-- **예상 효과**: 어떤 성능이 향상될지
+각 제안마다: **제안 항목** / 물리적 근거 / 예상 효과를 포함해주세요.
+수치 예시(파라미터 변경 범위)를 반드시 포함해주세요.
 
 ### 4. ⚠️ 주의사항
-현재 설계에서 제조 또는 광학적으로 주의해야 할 잠재적 리스크를 2~3가지 언급해주세요.
+제조 또는 광학적으로 주의해야 할 잠재적 리스크를 2~3가지 언급해주세요.
 """
-            return prompt
 
-        # ── AI 분석 실행 버튼 ─────────────────────────────────────────────
-        col_btn1, col_btn2 = st.columns([3, 1])
-        with col_btn1:
-            run_ai = st.button(
-                "🤖 AI 설계 분석 실행",
-                use_container_width=True,
-                disabled=(not ANTHROPIC_AVAILABLE or not ai_api_key.strip()),
-                help="Anthropic API Key가 필요합니다." if not ai_api_key.strip() else ""
-            )
-        with col_btn2:
-            if st.button("🗑️ 결과 초기화", use_container_width=True):
-                st.session_state["ai_analysis_result"] = None
-                st.rerun()
+        # ── 현재 파라미터 스냅샷 ───────────────────────────────────────────
+        params_snap = st.session_state.get("ai_analysis_params") or {
+            "path_choice": path_choice, "grating_face_mode": grating_face_mode,
+            "n_d": n_d_in, "abbe_v": abbe_v_in,
+            "thickness_mm": thickness_in, "epd_mm": epd_val_in,
+            "h_fov": h_fov, "v_fov": v_fov,
+            "oc_width": oc_width, "oc_height": oc_height,
+            "m_ord": m_ord, "le_tilt_x": le_tilt_x, "le_tilt_y": le_tilt_y,
+            "wl_R": wl_R, "wl_G": wl_G, "wl_B": wl_B,
+        }
+        prompt_text = build_ai_prompt(params_snap, results)
 
-        if not ANTHROPIC_AVAILABLE:
-            st.error("anthropic 패키지가 설치되어 있지 않습니다. `pip install anthropic` 후 재실행해주세요.")
-        elif not ai_api_key.strip():
-            st.warning("사이드바에 Anthropic API Key를 입력해주세요.")
+        # ═══════════════════════════════════════════════════════════════════
+        # 모드 A: API Key 직접 호출
+        # ═══════════════════════════════════════════════════════════════════
+        if ai_mode == "🔑 API Key 직접 호출":
+            st.markdown("#### 🔑 API Key 직접 호출 모드")
+            st.caption("Anthropic API Key로 자동 분석합니다. (사이드바에서 Key 입력)")
 
-        # ── AI 분석 실행 ──────────────────────────────────────────────────
-        if run_ai and ANTHROPIC_AVAILABLE and ai_api_key.strip():
-            params_snap = st.session_state.get("ai_analysis_params") or {
-                "path_choice": path_choice, "grating_face_mode": grating_face_mode,
-                "n_d": n_d_in, "abbe_v": abbe_v_in,
-                "thickness_mm": thickness_in, "epd_mm": epd_val_in,
-                "h_fov": h_fov, "v_fov": v_fov,
-                "oc_width": oc_width, "oc_height": oc_height,
-                "m_ord": m_ord, "le_tilt_x": le_tilt_x, "le_tilt_y": le_tilt_y,
-                "wl_R": wl_R, "wl_G": wl_G, "wl_B": wl_B,
-            }
-            prompt = build_ai_prompt(params_snap, results)
+            col_btn1, col_btn2 = st.columns([3, 1])
+            with col_btn1:
+                run_ai = st.button(
+                    "🤖 AI 설계 분석 실행",
+                    use_container_width=True,
+                    disabled=not ai_api_key.strip(),
+                    help="사이드바에 API Key를 먼저 입력하세요." if not ai_api_key.strip() else ""
+                )
+            with col_btn2:
+                if st.button("🗑️ 초기화", use_container_width=True, key="ai_reset_api"):
+                    st.session_state["ai_analysis_result"] = None
+                    st.rerun()
 
-            try:
-                client = anthropic.Anthropic(api_key=ai_api_key.strip())
+            if not ai_api_key.strip():
+                st.warning("사이드바에 Anthropic API Key를 입력해주세요.")
 
-                with st.spinner("🤖 AI가 설계를 분석 중입니다..."):
-                    # 스트리밍으로 실시간 출력
-                    ai_placeholder = st.empty()
-                    full_text = ""
-                    with client.messages.stream(
-                        model="claude-sonnet-4-6",
-                        max_tokens=2000,
-                        messages=[{"role": "user", "content": prompt}]
-                    ) as stream:
-                        for chunk in stream.text_stream:
-                            full_text += chunk
-                            ai_placeholder.markdown(full_text + "▌")
-                    ai_placeholder.markdown(full_text)
+            if run_ai and ai_api_key.strip():
+                try:
+                    with st.spinner("🤖 AI가 설계를 분석 중입니다..."):
+                        answer = call_claude_api(ai_api_key.strip(), prompt_text)
+                    st.session_state["ai_analysis_result"] = answer
+                    st.rerun()
+                except RuntimeError as e:
+                    err = str(e)
+                    if "401" in err:
+                        st.error("❌ API Key 인증 실패 — Key를 다시 확인해주세요.")
+                    elif "429" in err:
+                        st.error("❌ API 요청 한도 초과 — 잠시 후 다시 시도해주세요.")
+                    else:
+                        st.error(f"❌ 오류: {err}")
 
-                st.session_state["ai_analysis_result"] = full_text
-                st.success("✅ AI 분석 완료")
+            if st.session_state.get("ai_analysis_result"):
+                st.info("💡 아래는 최근 시뮬레이션에 대한 AI 분석입니다. 새 시뮬레이션 실행 시 초기화됩니다.")
+                st.markdown(st.session_state["ai_analysis_result"])
 
-            except anthropic.AuthenticationError:
-                st.error("❌ API Key가 유효하지 않습니다. 사이드바에서 키를 확인해주세요.")
-            except anthropic.RateLimitError:
-                st.error("❌ API 요청 한도 초과입니다. 잠시 후 다시 시도해주세요.")
-            except Exception as e:
-                st.error(f"❌ 오류 발생: {str(e)}")
-
-        # ── 이전 분석 결과 표시 ───────────────────────────────────────────
-        elif st.session_state.get("ai_analysis_result"):
-            st.info("💡 아래는 이전 시뮬레이션 결과에 대한 AI 분석입니다. 새 시뮬레이션을 실행하면 초기화됩니다.")
-            st.markdown(st.session_state["ai_analysis_result"])
-
+        # ═══════════════════════════════════════════════════════════════════
+        # 모드 B: 프롬프트 복사 (무료 — API Key 불필요)
+        # ═══════════════════════════════════════════════════════════════════
         else:
+            st.markdown("#### 📋 프롬프트 복사 모드 (무료)")
             st.markdown("""
-<div style="background:#f0f4ff;border:1px solid #c0d0f0;border-radius:8px;padding:20px;margin-top:10px;">
-<b>사용 방법</b><br><br>
-1️⃣ 사이드바에서 설계 파라미터 설정<br>
-2️⃣ <b>[▶ Run Simulation]</b> 클릭 → K-Space 결과 확인<br>
-3️⃣ 사이드바에 <b>Anthropic API Key</b> 입력<br>
-4️⃣ 이 탭에서 <b>[🤖 AI 설계 분석 실행]</b> 클릭<br><br>
-AI가 현재 설계를 분석하고 개선 방향을 제안해드립니다.
+<div style='background:#e8f4e8;border:1px solid #4caf50;border-radius:8px;padding:14px;margin-bottom:12px;'>
+<b>사용 방법</b><br>
+① 아래 <b>[📋 프롬프트 복사]</b> 버튼 클릭<br>
+② <a href="https://claude.ai" target="_blank"><b>claude.ai</b></a> 또는 Claude 앱을 열어 붙여넣기 (Ctrl+V)<br>
+③ Claude 응답을 복사한 뒤 아래 <b>응답 입력창</b>에 붙여넣기<br>
+④ <b>[💾 저장]</b> 버튼으로 결과 보관
 </div>
 """, unsafe_allow_html=True)
+
+            # 프롬프트 표시 + 복사 버튼
+            st.markdown("**① 생성된 프롬프트 (클릭 → 전체 선택 → 복사)**")
+            st.text_area(
+                "prompt_area", value=prompt_text, height=280,
+                label_visibility="collapsed", key="prompt_display"
+            )
+            # Streamlit 클립보드 복사 (st.code 이용한 one-click copy)
+            st.markdown("**또는 아래 코드블록을 클릭해 한 번에 복사하세요:**")
+            st.code(prompt_text, language=None)
+
+            st.markdown("---")
+            st.markdown("**③ Claude 응답을 여기에 붙여넣기**")
+            pasted = st.text_area(
+                "AI 응답 붙여넣기", height=300,
+                placeholder="Claude.ai에서 받은 응답을 여기에 붙여넣으세요...",
+                key="ai_paste_area"
+            )
+
+            col_save, col_clear = st.columns([3, 1])
+            with col_save:
+                if st.button("💾 저장", use_container_width=True, key="ai_save_btn"):
+                    if pasted.strip():
+                        st.session_state["ai_analysis_result"] = pasted.strip()
+                        st.success("✅ 저장 완료!")
+                        st.rerun()
+                    else:
+                        st.warning("응답을 먼저 붙여넣어 주세요.")
+            with col_clear:
+                if st.button("🗑️ 초기화", use_container_width=True, key="ai_reset_manual"):
+                    st.session_state["ai_analysis_result"] = None
+                    st.rerun()
+
+            # 저장된 결과 표시
+            if st.session_state.get("ai_analysis_result"):
+                st.markdown("---")
+                st.markdown("#### 📄 저장된 AI 분석 결과")
+                st.markdown(st.session_state["ai_analysis_result"])
 
 else:
     st.info("💡 사이드바의 설정을 조율하신 후 최하단의 [▶ Run Simulation] 버튼을 클릭하면 정밀 K-space 수치 해석 도면이 활성화됩니다.")
