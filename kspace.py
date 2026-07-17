@@ -23,7 +23,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. Claude API 호출 함수 (urllib 내장 라이브러리 사용 — 별도 패키지 불필요) ---
+# --- 2. AI API 호출 함수 (urllib 내장 라이브러리 사용 — 별도 패키지 불필요) ---
 def call_claude_api(api_key: str, prompt: str,
                     model: str = "claude-sonnet-4-6",
                     max_tokens: int = 2000) -> str:
@@ -51,6 +51,41 @@ def call_claude_api(api_key: str, prompt: str,
         body = json.loads(e.read().decode("utf-8"))
         msg  = body.get("error", {}).get("message", str(e))
         raise RuntimeError(f"HTTP {e.code}: {msg}")
+
+
+def call_gemini_api(api_key: str, prompt: str,
+                    model: str = "gemini-1.5-flash",
+                    max_output_tokens: int = 2000) -> str:
+    """
+    urllib만으로 Google Gemini API 호출.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_output_tokens}
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result["candidates"][0]["content"]["parts"][0]["text"]
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode("utf-8"))
+        msg = body.get("error", {}).get("message", str(e))
+        raise RuntimeError(f"HTTP {e.code}: {msg}")
+
+
+def get_secret_value(key_name: str, fallback: str = "") -> str:
+    """
+    환경변수 -> Streamlit Secrets -> 기본값 순으로 API 키 조회.
+    """
+    if os.environ.get(key_name):
+        return os.environ[key_name]
+    try:
+        return st.secrets[key_name]
+    except Exception:
+        return fallback
 
 # --- 3. Configuration Management ---
 def export_settings():
@@ -459,19 +494,37 @@ ai_mode = st.sidebar.radio(
     ["🔑 API Key 직접 호출", "📋 프롬프트 복사 (무료)"],
     index=1,
     key="ai_mode_sel",
-    help="API Key 없이도 '프롬프트 복사' 모드로 Claude.ai에서 무료로 사용할 수 있습니다."
+    help="API Key 없이도 프롬프트 복사 모드로 AI 웹 앱에서 무료로 사용할 수 있습니다."
+)
+ai_provider = st.sidebar.radio(
+    "AI Provider",
+    ["Claude", "Gemini"],
+    index=0,
+    key="ai_provider_sel",
+    help="Claude 또는 Gemini 중 하나를 선택해 직접 API 호출할 수 있습니다."
 )
 ai_api_key = ""
 if ai_mode == "🔑 API Key 직접 호출":
-    _env_key  = os.environ.get("ANTHROPIC_API_KEY", "")
-    ai_api_key = st.sidebar.text_input(
-        "Anthropic API Key",
-        value=_env_key,
-        type="password",
-        placeholder="sk-ant-...",
-        help="환경변수 ANTHROPIC_API_KEY가 설정돼 있으면 자동 입력됩니다.",
-        label_visibility="collapsed"
-    )
+    if ai_provider == "Claude":
+        _env_key = get_secret_value("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+        ai_api_key = st.sidebar.text_input(
+            "Anthropic API Key",
+            value=_env_key,
+            type="password",
+            placeholder="sk-ant-...",
+            help="환경변수 ANTHROPIC_API_KEY 또는 Streamlit Secrets에 저장하면 자동 입력됩니다.",
+            label_visibility="collapsed"
+        )
+    else:
+        _env_key = get_secret_value("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+        ai_api_key = st.sidebar.text_input(
+            "Google Gemini API Key",
+            value=_env_key,
+            type="password",
+            placeholder="AIza...",
+            help="환경변수 GEMINI_API_KEY 또는 Streamlit Secrets에 저장하면 자동 입력됩니다.",
+            label_visibility="collapsed"
+        )
 
 st.sidebar.markdown("---")
 run_simulation_trigger = st.sidebar.button(label="▶ Run Simulation", use_container_width=True)
@@ -902,7 +955,7 @@ LE 틸트               : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}
         # ═══════════════════════════════════════════════════════════════════
         if ai_mode == "🔑 API Key 직접 호출":
             st.markdown("#### 🔑 API Key 직접 호출 모드")
-            st.caption("Anthropic API Key로 자동 분석합니다. (사이드바에서 Key 입력)")
+            st.caption(f"{ai_provider} API Key로 자동 분석합니다. (사이드바에서 Key 입력)")
 
             col_btn1, col_btn2 = st.columns([3, 1])
             with col_btn1:
@@ -918,12 +971,18 @@ LE 틸트               : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}
                     st.rerun()
 
             if not ai_api_key.strip():
-                st.warning("사이드바에 Anthropic API Key를 입력해주세요.")
+                if ai_provider == "Claude":
+                    st.warning("사이드바에 Anthropic API Key를 입력해주세요.")
+                else:
+                    st.warning("사이드바에 Google Gemini API Key를 입력해주세요.")
 
             if run_ai and ai_api_key.strip():
                 try:
                     with st.spinner("🤖 AI가 설계를 분석 중입니다..."):
-                        answer = call_claude_api(ai_api_key.strip(), prompt_text)
+                        if ai_provider == "Claude":
+                            answer = call_claude_api(ai_api_key.strip(), prompt_text)
+                        else:
+                            answer = call_gemini_api(ai_api_key.strip(), prompt_text)
                     st.session_state["ai_analysis_result"] = answer
                     st.rerun()
                 except RuntimeError as e:
@@ -948,8 +1007,8 @@ LE 틸트               : θ_x={p['le_tilt_x']:.1f}°, θ_y={p['le_tilt_y']:.1f}
 <div style='background:#e8f4e8;border:1px solid #4caf50;border-radius:8px;padding:14px;margin-bottom:12px;'>
 <b>사용 방법</b><br>
 ① 아래 <b>[📋 프롬프트 복사]</b> 버튼 클릭<br>
-② <a href="https://claude.ai" target="_blank"><b>claude.ai</b></a> 또는 Claude 앱을 열어 붙여넣기 (Ctrl+V)<br>
-③ Claude 응답을 복사한 뒤 아래 <b>응답 입력창</b>에 붙여넣기<br>
+② <a href="https://claude.ai" target="_blank"><b>Claude.ai</b></a> 또는 <a href="https://gemini.google.com" target="_blank"><b>Gemini</b></a> 웹 앱을 열어 붙여넣기 (Ctrl+V)<br>
+③ AI 응답을 복사한 뒤 아래 <b>응답 입력창</b>에 붙여넣기<br>
 ④ <b>[💾 저장]</b> 버튼으로 결과 보관
 </div>
 """, unsafe_allow_html=True)
