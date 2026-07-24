@@ -146,7 +146,7 @@ def update_sync(k, val):
         #        동기화는 반드시 R_ / G_ / B_ 로 시작하는 파장채널 키에만 적용.
         if not (k.startswith("R_") or k.startswith("G_") or k.startswith("B_")):
             return
-        for suffix in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc']:
+        for suffix in ['icg', 'epe', 'oc', 'efficg', 'effepe', 'effoc', 'n_d', 'abbe_v', 'thickness']:
             if k.endswith(f"_{suffix}"):
                 for color in ['R', 'G', 'B']:
                     st.session_state[f"{color}_{suffix}_slider"] = float(val)
@@ -434,6 +434,7 @@ def calculate_k_space(
     return {
         "color": wl_dict["color"],
         "k0": k0, "k_wg_max": k_wg_max,
+        "thickness": t_mm,
         "kx_in": kx_in, "ky_in": ky_in, "kz_in": kz_in,
         "kx_icg": kx_icg, "ky_icg": ky_icg, "kz_icg": kz_icg,
         "kx_epe": kx_epe, "ky_epe": ky_epe, "kz_epe": kz_epe,
@@ -483,8 +484,15 @@ le_tilt_y = dual_input("LE Vertical Incident Angle θ_y (° -:Gnd +:Sky)",  -30.
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Hardware Glass Properties**")
-n_d_in    = dual_input("Substrate Index (n at 589nm)", 1.0,   3.0,  1.75, 0.01, "n_d",    "%.2f")
-abbe_v_in = dual_input("Abbe Number (Vd)",            10.0, 100.0, 35.0,  0.1,  "abbe_v", "%.1f")
+if single_layer_sync:
+    n_d_in       = dual_input("Substrate Index (n at 589nm)", 1.0,   3.0,  1.75, 0.01, "n_d",       "%.2f", sidebar=True)
+    abbe_v_in    = dual_input("Abbe Number (Vd)",            10.0, 100.0, 35.0,  0.1,  "abbe_v",    "%.1f", sidebar=True)
+    thickness_in = dual_input("Substrate Thickness t (mm)", 0.1,   3.0,  0.40, 0.01, "thickness", "%.2f", sidebar=True)
+else:
+    n_d_in       = st.session_state.get("n_d_num", 1.75)
+    abbe_v_in    = st.session_state.get("abbe_v_num", 35.0)
+    thickness_in = st.session_state.get("thickness_num", 0.40)
+    st.sidebar.caption("💡 Single Layer Mode 해제 시 하단 각 채널(R/G/B)별로 기판 특성(굴절률, 아베수, 두께)을 개별 설정합니다.")
 
 if grating_face_mode == "Reflection (Back Face)":
     n_green = get_refractive_index(520.0, n_d_in, abbe_v_in)
@@ -501,11 +509,17 @@ if grating_face_mode == "Reflection (Back Face)":
     </div>
     """, unsafe_allow_html=True)
 
-thickness_in = dual_input("Substrate Thickness t (mm)", 0.1,  3.0, 0.40, 0.01, "thickness", "%.2f")
-epd_val_in   = dual_input("Light Engine EPD Size (mm)", 1.0, 50.0,  3.5,  0.1, "epd_val",   "%.1f")
-h_fov = dual_range_input("Horizontal FOV Bounds (°)", -60, 60, (-30, 30), 0.01, "h_fov")
-v_fov = dual_range_input("Vertical FOV Bounds (°)",   -60, 60, (-20, 20), 0.01, "v_fov")
-m_ord = st.sidebar.selectbox("Diffraction Order (m)", [1, -1, 2, -2], index=1, key="m_order_select")
+epd_val_in = dual_input("Light Engine EPD Size (mm)", 1.0, 50.0, 3.5, 0.1, "epd_val", "%.1f", sidebar=True)
+m_ord      = st.sidebar.selectbox("Diffraction Order (m)", [1, -1, 2, -2], index=1, key="m_order_select")
+
+# 우측 메인 화면 상단 FOV 입력 패널
+st.markdown("### 🎯 Field of View (FOV) Specifications")
+col_fov1, col_fov2 = st.columns(2)
+with col_fov1:
+    h_fov = dual_range_input("Horizontal FOV Bounds (°)", -60, 60, (-30, 30), 0.01, "h_fov")
+with col_fov2:
+    v_fov = dual_range_input("Vertical FOV Bounds (°)",   -60, 60, (-20, 20), 0.01, "v_fov")
+st.markdown("---")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**📐 Out-Coupler Aperture Form Factor**")
@@ -564,18 +578,20 @@ else:
 
 st.sidebar.markdown("---")
 
-def get_wl_inputs(name, def_l, def_p, n_d, V_d):
+def get_wl_inputs(name, def_l, def_p, n_d, V_d, thickness):
     act = st.sidebar.checkbox(f"Enable Wavelength {name}", value=True, key=f"{name}_active")
     if not act:
         return {"active": False}
     with st.sidebar.container():
         st.markdown(f"**[{name} Channel] Parameters**")
         if single_layer_sync:
-            channel_n_d = float(n_d)
-            channel_abbe_v = float(V_d)
+            channel_n_d       = float(n_d)
+            channel_abbe_v    = float(V_d)
+            channel_thickness = float(thickness)
         else:
-            channel_n_d = dual_input(f"{name} Substrate Index (n at 589nm)", 1.0, 3.0, float(n_d), 0.01, f"{name}_n_d", "%.2f", sidebar=True)
-            channel_abbe_v = dual_input(f"{name} Abbe Number (Vd)", 10.0, 100.0, float(V_d), 0.1, f"{name}_abbe_v", "%.1f", sidebar=True)
+            channel_n_d       = dual_input(f"{name} Substrate Index (n at 589nm)", 1.0, 3.0, float(n_d), 0.01, f"{name}_n_d", "%.2f", sidebar=True)
+            channel_abbe_v    = dual_input(f"{name} Abbe Number (Vd)", 10.0, 100.0, float(V_d), 0.1, f"{name}_abbe_v", "%.1f", sidebar=True)
+            channel_thickness = dual_input(f"{name} Substrate Thickness t (mm)", 0.1, 3.0, float(thickness), 0.01, f"{name}_thickness", "%.2f", sidebar=True)
 
         wl      = dual_input("λ Wavelength (nm)", 400.0, 750.0, def_l, 0.01, f"{name}_wl",  "%.2f", sidebar=True)
         limit_p = wl / get_refractive_index(wl, channel_n_d, channel_abbe_v)
@@ -602,7 +618,6 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
 
         st.markdown("*Diffraction Efficiencies (0.00 ~ 1.00)*")
         eff_icg = dual_input("ICG Efficiency", 0.00, 1.00, 0.30, 0.01, f"{name}_efficg", "%.2f", sidebar=True)
-        # [FIX] Path A일 때 float(1.0) 명시하여 타입 안전성 보장
         eff_epe = float(dual_input("EPE Efficiency", 0.00, 1.00, 0.20, 0.01, f"{name}_effepe", "%.2f", sidebar=True)
                         if "Path B" in path_choice else 1.0)
         eff_oc  = dual_input("OC Efficiency",  0.00, 1.00, 0.40, 0.01, f"{name}_effoc",  "%.2f", sidebar=True)
@@ -612,12 +627,13 @@ def get_wl_inputs(name, def_l, def_p, n_d, V_d):
             "Lambda_ICG": icg_p, "Lambda_EPE": epe_p, "Lambda_OC": oc_p,
             "eff_icg": eff_icg, "eff_epe": eff_epe, "eff_oc": eff_oc,
             "n_d": float(channel_n_d), "abbe_v": float(channel_abbe_v),
+            "thickness": float(channel_thickness),
             "color": name,
         }
 
-wl_R = get_wl_inputs("R", 638.0, 300.0, n_d_in, abbe_v_in)
-wl_G = get_wl_inputs("G", 520.0, 300.0, n_d_in, abbe_v_in)
-wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in)
+wl_R = get_wl_inputs("R", 638.0, 300.0, n_d_in, abbe_v_in, thickness_in)
+wl_G = get_wl_inputs("G", 520.0, 300.0, n_d_in, abbe_v_in, thickness_in)
+wl_B = get_wl_inputs("B", 450.0, 300.0, n_d_in, abbe_v_in, thickness_in)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🤖 AI Design Briefing**")
@@ -808,8 +824,8 @@ if results is not None:
                 k_z    = max(c_ray["kz_icg"], 1e-10)
                 # [FIX] prop_distance_mm → oc_width (실제 OC 가로 크기 연동)
                 prop_distance_mm = oc_width
-                num_bounces      = prop_distance_mm / (2.0 * thickness_in * (k_rho / k_z))
-                bulk_path_len    = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * n_d_in))
+                num_bounces      = prop_distance_mm / (2.0 * r.get("thickness", thickness_in) * (k_rho / k_z))
+                bulk_path_len    = prop_distance_mm / (k_rho / max(1e-10, r["k0"] * r.get("n_d", n_d_in)))
                 tir_loss_factor  = (0.998 ** max(1.0, num_bounces)) * (0.999 ** bulk_path_len)
                 lumen_out        = r["eff_icg"] * r["eff_epe"] * r["eff_oc"] * tir_loss_factor
                 nits_per_lumen   = lumen_out / (area_m2 * omega) if omega > 0 else 0.0
@@ -1001,7 +1017,7 @@ if results is not None:
                     line += f" | Λ_EPE={wd['Lambda_EPE']:.1f}nm"
                 line += (f" | Λ_OC={wd['Lambda_OC']:.1f}nm | "
                          f"η_ICG={wd['eff_icg']:.2f} / η_EPE={wd['eff_epe']:.2f} / η_OC={wd['eff_oc']:.2f}")
-                line += (f" | n_d={wd.get('n_d', p['n_d']):.3f} | Abbe Vd={wd.get('abbe_v', p['abbe_v']):.1f}")
+                line += (f" | n_d={wd.get('n_d', p['n_d']):.3f} | Abbe Vd={wd.get('abbe_v', p['abbe_v']):.1f} | t={wd.get('thickness', p['thickness_mm']):.2f}mm")
                 wl_lines.append(line)
             wl_text = "\n".join(wl_lines) if wl_lines else "  (활성 채널 없음)"
 
